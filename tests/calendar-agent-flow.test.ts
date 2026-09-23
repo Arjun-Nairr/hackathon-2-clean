@@ -279,6 +279,38 @@ test("an unrelated message after an open calendar_change thread is answered norm
   );
 });
 
+test("a draft persisted before a later failure in the same turn is rejected, not left as a hidden pending draft", async () => {
+  const sourceMessageId = `test-hidden-draft-${randomUUID()}`;
+  try {
+    await withFakeGeminiSequence(
+      [
+        {
+          functionCall: {
+            name: "create_calendar_draft",
+            args: {
+              action: "add",
+              reason: "Add a one-time AED 500 bonus on 28 September 2026",
+              events: [{ name: "Bonus", amount_aed: 500, direction: "credit", date: "2026-09-28", recurrence: "none", category: "bonus" }],
+            },
+          },
+        },
+        // A second model turn that invents an unrelated, unverifiable
+        // figure — this fails the number guard *after* the draft above was
+        // already inserted as 'pending'.
+        { text: "Actually, on top of that your balance is now AED 999,999 short." },
+      ],
+      async () => {
+        await assert.rejects(() => answerChatMessage("Add a bonus", [], PROFILE, events, sourceMessageId));
+      },
+    );
+    const rows = await sql()`select status from calendar_drafts where source_message_id = ${sourceMessageId}`;
+    assert.equal(rows.length, 1, "the draft insert itself must still have happened");
+    assert.equal(rows[0]?.status, "rejected", "a draft orphaned by a same-turn failure must be rejected, never left pending");
+  } finally {
+    await sql()`delete from calendar_drafts where source_message_id = ${sourceMessageId}`;
+  }
+});
+
 test("a second write-tool call in the same turn cannot create a second draft", async () => {
   const sourceMessageId = `test-second-draft-${randomUUID()}`;
   const result = await withFakeGeminiSequence(

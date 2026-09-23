@@ -11,7 +11,21 @@ const TIMEOUT_MS = 15_000;
 // covers both for the short answers this app asks for.
 const MAX_OUTPUT_TOKENS = 1024;
 
-export class GeminiError extends Error {}
+// `retryable` marks a transient failure (timeout, network failure, 429, or
+// 5xx) worth one retry of the same model turn — never a validation/
+// number-guard failure or an ordinary 4xx, which mean the request itself
+// was bad and would fail identically again.
+export class GeminiError extends Error {
+  retryable: boolean;
+  constructor(message: string, retryable = false) {
+    super(message);
+    this.retryable = retryable;
+  }
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 429 || (status >= 500 && status < 600);
+}
 
 export interface GeminiFunctionCall {
   name: string;
@@ -40,7 +54,7 @@ export interface GeminiToolDeclaration {
   parameters: Record<string, unknown>;
 }
 
-async function generateContent(systemInstruction: string, contents: GeminiContent[], tools?: GeminiToolDeclaration[]): Promise<GeminiContent> {
+async function generateContentOnce(systemInstruction: string, contents: GeminiContent[], tools?: GeminiToolDeclaration[]): Promise<GeminiContent> {
   const apiKey = getGeminiApiKey();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -70,7 +84,7 @@ async function generateContent(systemInstruction: string, contents: GeminiConten
 
     if (!response.ok) {
       const errBody = await response.text();
-      throw new GeminiError(`Gemini request failed: ${response.status} ${errBody.slice(0, 300)}`);
+      throw new GeminiError(`Gemini request failed: ${response.status} ${errBody.slice(0, 300)}`, isRetryableStatus(response.status));
     }
 
     const data = (await response.json()) as {
@@ -84,11 +98,29 @@ async function generateContent(systemInstruction: string, contents: GeminiConten
   } catch (err) {
     if (err instanceof GeminiError) throw err;
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new GeminiError(`Gemini request timed out after ${TIMEOUT_MS}ms.`);
+      throw new GeminiError(`Gemini request timed out after ${TIMEOUT_MS}ms.`, true);
     }
-    throw new GeminiError(err instanceof Error ? err.message : String(err));
+    // Anything else reaching here is a raw fetch/network failure (or a
+    // malformed response) rather than a Gemini-issued error — retryable.
+    throw new GeminiError(err instanceof Error ? err.message : String(err), true);
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+// One retry, of the same model turn only. This wraps a single request/
+// response round trip to Gemini — it runs before the caller ever decides
+// whether to execute a tool, so a retry here can never re-run a tool call
+// or create a second draft (see chat.ts's loop, which only sees the final
+// GeminiContent this returns).
+async function generateContent(systemInstruction: string, contents: GeminiContent[], tools?: GeminiToolDeclaration[]): Promise<GeminiContent> {
+  try {
+    return await generateContentOnce(systemInstruction, contents, tools);
+  } catch (err) {
+    if (err instanceof GeminiError && err.retryable) {
+      return generateContentOnce(systemInstruction, contents, tools);
+    }
+    throw err;
   }
 }
 

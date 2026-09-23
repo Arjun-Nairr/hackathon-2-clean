@@ -27,6 +27,12 @@ const quickPrompts = [
 ];
 const quickLabels = ['Safe to spend?', 'My tight month?', 'My goals?'];
 
+const writeActions = [
+  { label: 'Add expense', prompt: 'Add an expense to my calendar.' },
+  { label: 'Add income', prompt: 'Add an income source to my calendar.' },
+  { label: 'Remove item', prompt: 'Remove an expense or income source from my calendar.' },
+];
+
 const bandClass: Record<Extract<ChatCard, { type: 'verdict' }>['comfortBand'], { bar: string; word: string; label: string }> = {
   green: { bar: 'bg-[#12A66A]', word: 'text-[#168657]', label: 'Comfortable' },
   amber: { bar: 'bg-[#E0A100]', word: 'text-[#9A6B00]', label: 'Tight' },
@@ -251,6 +257,17 @@ export default function ChatPage() {
             {quickPrompts.map((prompt, index) => (
               <button key={prompt} type="button" onClick={() => ask(prompt)} className="min-h-10 rounded-full border border-[#DDE7EC] bg-white px-3.5 text-[12px] font-semibold text-[#003B73]" data-testid={`button-quick-prompt-${index}`}>{quickLabels[index]}</button>
             ))}
+          </div>
+        )}
+
+        {messages.length === 0 && (
+          <div className="mt-3" data-testid="chat-write-actions">
+            <p className="text-[10px] font-semibold uppercase tracking-[.12em] text-[#98A2B3]">Change your calendar</p>
+            <div className="mt-1.5 flex flex-wrap gap-2">
+              {writeActions.map((action, index) => (
+                <button key={action.label} type="button" onClick={() => ask(action.prompt)} className="min-h-10 rounded-full border border-[#DDE7EC] bg-white px-3.5 text-[12px] font-semibold text-[#003B73]" data-testid={`button-write-action-${index}`}>{action.label}</button>
+              ))}
+            </div>
           </div>
         )}
 

@@ -6,12 +6,19 @@ export type Intent = 'read' | 'calendar_change' | 'missing_data' | 'unavailable'
 // Calendar-change requests in this app are usually imperative ("Add ...",
 // "Remove ..."), so checking only the first word avoids misreading a read
 // question that happens to contain one of these verbs mid-sentence (e.g.
-// "What would change my safe-to-spend?"). A second, narrow pattern catches
-// the one common non-imperative phrasing this app must also support:
-// reporting income just received ("I received an AED 8,000 bonus today"),
-// which names no read-question keyword at all.
+// "What would change my safe-to-spend?"). A polite/indirect framing
+// ("Can you add an expense?", "I want to add a bonus", "Help me remove
+// this payment") says the same thing with a few extra words in front — this
+// pattern strips one recognized opener before applying the same
+// first-word check, so those still count while a verb buried mid-sentence
+// (not right after a recognized opener) still does not. A second, narrow
+// pattern catches the one common non-imperative phrasing this app must
+// also support: reporting income received or being received
+// ("I received an AED 8,000 bonus today", "I'm receiving a bonus
+// tomorrow"), which names no read-question keyword at all.
 const CALENDAR_CHANGE_VERBS = new Set(['add', 'remove', 'delete', 'update', 'change', 'edit', 'set']);
-const CALENDAR_CHANGE_OPENER_PATTERN = /^i\s+(received|got|earned)\b/i;
+const CALENDAR_CHANGE_OPENER_PATTERN = /^i(?:'m|\s+am)?\s+(received|receiving|got|getting|earned|earning)\b/i;
+const REQUEST_OPENER_PATTERN = /^(i want to|i'd like to|i would like to|i wanna|please|can you|could you|would you|help me(?: to)?)\s+/i;
 
 const LOAN_PATTERN = /\b(loan|emi|amorti[sz]ation|apr|debt[- ]burden|debt[- ]to[- ]income)\b/i;
 const RENT_VS_BUY_PATTERN = /\brent\b[^.?!]*\bbuy\b|\bbuy\b[^.?!]*\brent\b|rent[- ]vs\.?[- ]buy|rent[- ]versus[- ]buy/i;
@@ -32,7 +39,8 @@ export function classifyIntent(message: string): Intent {
   const trimmed = message.trim();
   if (!trimmed) return 'decline';
 
-  if (CALENDAR_CHANGE_VERBS.has(firstWord(trimmed)) || CALENDAR_CHANGE_OPENER_PATTERN.test(trimmed)) {
+  const withoutOpener = trimmed.replace(REQUEST_OPENER_PATTERN, '');
+  if (CALENDAR_CHANGE_VERBS.has(firstWord(withoutOpener)) || CALENDAR_CHANGE_OPENER_PATTERN.test(trimmed)) {
     return 'calendar_change';
   }
   if (LOAN_PATTERN.test(trimmed) || RENT_VS_BUY_PATTERN.test(trimmed)) {
@@ -77,6 +85,16 @@ const QUESTION_OPENER_PATTERN = /^(what|who|when|where|why|how|is|are|was|were|d
 // independent signal are more likely a genuinely new, unrelated message.
 const MAX_CONTINUATION_WORDS = 6;
 
+// A genuine clarifying question ("Could you share the amount...?") ends in
+// '?'. A completed request's reply (e.g. "I've drafted AED 3,000 monthly
+// school fees — confirm in the app to apply it.") is a statement, not a
+// question — that difference is the only signal available here (history is
+// plain role+text, no card metadata), and it's exactly the signal needed to
+// avoid reviving a request that already got its draft.
+function isClarifyingQuestion(content: string): boolean {
+  return content.trim().endsWith('?');
+}
+
 // classifyIntent looks at one message in isolation. A multi-turn calendar
 // change breaks that: "Add school fees" (calendar_change) gets a
 // clarifying question back, and the user's answer — "AED 3,000 monthly
@@ -96,12 +114,30 @@ export function classifyIntentWithHistory(message: string, history: HistoryTurn[
 
   // Only a direct reply to the assistant's own last turn counts — not an
   // unrelated message that happens to arrive after some older calendar
-  // conversation.
+  // conversation. And it must actually be a clarifying question: a
+  // completed-request reply means there is nothing left open to continue.
   const last = history[history.length - 1];
-  if (!last || last.role !== 'assistant') return 'decline';
+  if (!last || last.role !== 'assistant' || !isClarifyingQuestion(last.content)) return 'decline';
 
-  const hadOpenCalendarChange = history.some((turn) => turn.role === 'user' && classifyIntent(turn.content) === 'calendar_change');
-  if (!hadOpenCalendarChange) return 'decline';
+  // Walk back from just before that question looking for the request it
+  // belongs to — not "any calendar-change message anywhere in history".
+  // A short/non-classifiable user reply (answering only part of what was
+  // asked) or another clarifying question keeps the same open thread; any
+  // other assistant reply (a completed draft, a plain answer) means an
+  // earlier request was already resolved, so the walk stops there instead
+  // of crediting a later, unrelated request as still open.
+  let openRequest = false;
+  for (let i = history.length - 2; i >= 0; i -= 1) {
+    const turn = history[i];
+    if (turn.role === 'user') {
+      const turnIntent = classifyIntent(turn.content);
+      if (turnIntent === 'calendar_change') { openRequest = true; break; }
+      if (turnIntent !== 'decline') break; // an unrelated topic closes the thread
+      continue; // a partial clarification answer — keep looking further back
+    }
+    if (!isClarifyingQuestion(turn.content)) break; // a resolved/completed reply closes the thread
+  }
+  if (!openRequest) return 'decline';
 
   // A new question is never a continuation, however short.
   if (trimmed.includes('?') || QUESTION_OPENER_PATTERN.test(trimmed)) return 'decline';

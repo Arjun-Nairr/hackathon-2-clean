@@ -11,6 +11,7 @@ import { callGemini, GeminiError, type GeminiContent } from './gemini.js';
 import { classifyIntentWithHistory } from './intent.js';
 import { loadSkill } from './skill.js';
 import { ALL_TOOLS, READ_TOOLS, executeTool, type ToolExecution } from './tools.js';
+import { markDraftRejected } from './drafts-repository.js';
 import { extractNumbers, findUnsupportedMonetaryClaims } from './number-guard.js';
 import type { ChatCard, ChatHistoryItem } from '../../src/lib/api/types';
 
@@ -121,60 +122,76 @@ export async function answerChatMessage(
   let finalText: string | undefined;
   let draftCreated: ToolExecution['draftCreated'];
 
-  for (let turn = 0; turn < MAX_TOOL_CALLS; turn += 1) {
-    const modelContent = await callGemini(systemInstruction, contents, tools);
-    contents.push(modelContent);
+  try {
+    for (let turn = 0; turn < MAX_TOOL_CALLS; turn += 1) {
+      const modelContent = await callGemini(systemInstruction, contents, tools);
+      contents.push(modelContent);
 
-    const callPart = modelContent.parts.find((p) => p.functionCall)?.functionCall;
-    if (!callPart) {
-      finalText = modelContent.parts.map((p) => p.text ?? '').join('').trim();
-      break;
+      const callPart = modelContent.parts.find((p) => p.functionCall)?.functionCall;
+      if (!callPart) {
+        finalText = modelContent.parts.map((p) => p.text ?? '').join('').trim();
+        break;
+      }
+
+      // At most one draft per assistant turn: once a draft exists, refuse a
+      // second create_calendar_draft call rather than executing it — this
+      // stops a second pending row from ever being written (and left
+      // orphaned, since only the first draft's card is ever shown).
+      if (callPart.name === 'create_calendar_draft' && draftCreated) {
+        contents.push({
+          role: 'user',
+          parts: [{ functionResponse: { name: callPart.name, response: { ok: false, error: 'A draft was already created this turn. Only one draft may be proposed per response — tell the user about the existing draft instead.' } } }],
+        });
+        continue;
+      }
+
+      const execution = await executeTool(callPart.name, callPart.args, { profile, events, sourceMessageId });
+      if (execution.draftCreated) draftCreated = execution.draftCreated;
+      // See gemini.ts's GeminiContent comment: this model wants the tool
+      // result back as role "user", not the conventional "function" role.
+      contents.push({ role: 'user', parts: [{ functionResponse: { name: callPart.name, response: execution.result } }] });
     }
 
-    // At most one draft per assistant turn: once a draft exists, refuse a
-    // second create_calendar_draft call rather than executing it — this
-    // stops a second pending row from ever being written (and left
-    // orphaned, since only the first draft's card is ever shown).
-    if (callPart.name === 'create_calendar_draft' && draftCreated) {
-      contents.push({
-        role: 'user',
-        parts: [{ functionResponse: { name: callPart.name, response: { ok: false, error: 'A draft was already created this turn. Only one draft may be proposed per response — tell the user about the existing draft instead.' } } }],
-      });
-      continue;
+    if (!finalText) {
+      throw new GeminiError('Gemini did not produce a final answer within the tool-call limit.');
     }
 
-    const execution = await executeTool(callPart.name, callPart.args, { profile, events, sourceMessageId });
-    if (execution.draftCreated) draftCreated = execution.draftCreated;
-    // See gemini.ts's GeminiContent comment: this model wants the tool
-    // result back as role "user", not the conventional "function" role.
-    contents.push({ role: 'user', parts: [{ functionResponse: { name: callPart.name, response: execution.result } }] });
-  }
+    // Defense in depth: the system prompt and skill both say never to
+    // invent a number, but a prompt is not a guarantee. The allow-list
+    // always includes numbers the user themselves supplied in this message
+    // (a figure the user typed is a fact, not something Gemini invented —
+    // e.g. "Can I afford a AED 3,000 TV?" lets Gemini repeat "AED 3,000"
+    // back without tripping the guard). A calendar_change turn additionally
+    // allows the amounts in any draft that got created.
+    const allowList =
+      intent === 'calendar_change'
+        ? [...monetaryAmounts, ...extractNumbers(trimmed), ...(draftCreated?.draft.events?.map((e) => e.amount_aed) ?? [])]
+        : [...monetaryAmounts, ...extractNumbers(trimmed)];
 
-  if (!finalText) {
-    throw new GeminiError('Gemini did not produce a final answer within the tool-call limit.');
-  }
-
-  // Defense in depth: the system prompt and skill both say never to invent
-  // a number, but a prompt is not a guarantee. The allow-list always
-  // includes numbers the user themselves supplied in this message (a
-  // figure the user typed is a fact, not something Gemini invented — e.g.
-  // "Can I afford a AED 3,000 TV?" lets Gemini repeat "AED 3,000" back
-  // without tripping the guard). A calendar_change turn additionally
-  // allows the amounts in any draft that got created.
-  const allowList =
-    intent === 'calendar_change'
-      ? [...monetaryAmounts, ...extractNumbers(trimmed), ...(draftCreated?.draft.events?.map((e) => e.amount_aed) ?? [])]
-      : [...monetaryAmounts, ...extractNumbers(trimmed)];
-
-  const unsupported = findUnsupportedMonetaryClaims(finalText, allowList);
-  if (unsupported.length > 0) {
-    throw new UnsupportedClaimError(`Gemini response contained unsupported monetary claim(s): ${unsupported.join(', ')}`);
+    const unsupported = findUnsupportedMonetaryClaims(finalText, allowList);
+    if (unsupported.length > 0) {
+      throw new UnsupportedClaimError(`Gemini response contained unsupported monetary claim(s): ${unsupported.join(', ')}`);
+    }
+  } catch (err) {
+    // A draft was already persisted as 'pending' by executeTool, but this
+    // turn is about to fail (no final answer, a Gemini error even after
+    // the one retry, or an unverifiable claim) — the caller below never
+    // runs, so no card is ever shown for it. Left alone, that draft would
+    // be an invisible row still sitting there as actionable. Reject it —
+    // this only flips calendar_drafts.status, never calendar_events — so
+    // nothing pending survives a turn the user never saw succeed.
+    // Best-effort: if this cleanup itself fails, the original error is
+    // still what the user sees.
+    if (draftCreated) {
+      await markDraftRejected(draftCreated.draftId).catch(() => {});
+    }
+    throw err;
   }
 
   if (draftCreated) {
     const d = draftCreated.draft;
     return {
-      text: finalText,
+      text: finalText!,
       card: {
         type: 'calendar_draft',
         draftId: d.draft_id,
@@ -187,5 +204,5 @@ export async function answerChatMessage(
     };
   }
 
-  return { text: finalText, card: { type: 'answer', source: 'gemini' } };
+  return { text: finalText!, card: { type: 'answer', source: 'gemini' } };
 }
