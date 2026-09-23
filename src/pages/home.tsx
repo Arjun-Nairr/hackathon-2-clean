@@ -12,10 +12,13 @@ export default function HomePage() {
   const { data: calendar, isLoading, isError, refetch } = useGetMoneyCalendar({ query: { queryKey: getGetMoneyCalendarQueryKey() } });
   const [detailsOpen, setDetailsOpen] = useState(false);
 
-  // Every figure below (daily allowance, status, its color) is a field on
-  // `calendar` already computed by the engine; the page only formats it.
+  // Every figure below (daily allowance, status, its color, and who's
+  // "coming up") is a field on `calendar` already computed by the engine;
+  // the page only formats it — it must not re-derive financial state
+  // (e.g. re-filtering `events` by date here previously let an already-past
+  // event show up as "coming up" again).
   const reviewNeeds = useMemo(() => calendar?.events.filter((e) => !e.reviewed && (e.status === 'forecasted' || e.status === 'pending')) ?? [], [calendar]);
-  const upcoming = useMemo(() => (calendar?.events ?? []).filter((e) => e.kind !== 'income').sort((a, b) => a.day - b.day), [calendar]);
+  const upcoming = calendar?.upcomingCommitments ?? [];
 
   if (isLoading) {
     return (
@@ -47,6 +50,7 @@ export default function HomePage() {
   const StatusIcon = statusIcon[calendar.status.tone];
   const statusColor = calendar.status.tone === 'success' ? 'text-[#12A66A] bg-[#12A66A]/10' : calendar.status.tone === 'warning' ? 'text-[#F59E0B] bg-[#F59E0B]/10' : 'text-[#D20A58] bg-[#D20A58]/10';
   const nextPaydayLabel = new Date(`${calendar.nextPaydayDate}T00:00:00`).toLocaleDateString('en-AE', { day: 'numeric', month: 'short' });
+  const exemplarDateLabel = new Date(calendar.financialSnapshot.asOf).toLocaleDateString('en-AE', { day: 'numeric', month: 'short', year: 'numeric' });
 
   return (
     <BayzatiMobileShell active="home">
@@ -55,7 +59,7 @@ export default function HomePage() {
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[.16em] text-[#667085]">Overview</p>
             <h1 className="mt-1 text-[28px] font-bold leading-none tracking-[-.04em] text-[#003B73]">
-              Your money today.
+              Your money, {exemplarDateLabel}.
             </h1>
           </div>
           <div className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[10px] font-semibold ${statusColor}`} data-testid="status-indicator">
@@ -63,6 +67,10 @@ export default function HomePage() {
             <span>{calendar.status.text}</span>
           </div>
         </header>
+
+        <p className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-[#DDE7EC] bg-white px-3 py-1.5 text-[10px] font-semibold text-[#667085]" data-testid="text-demo-date-badge">
+          Demo data — fixed as of {exemplarDateLabel}, not the real current date
+        </p>
 
         <section className="mt-6 overflow-hidden rounded-[18px] bg-[#003B73] p-5 text-white shadow-md" data-testid="card-daily-allowance">
           <div className="flex items-center justify-between">
@@ -212,7 +220,7 @@ export default function HomePage() {
                 <div className="mt-2 flex justify-between border-t border-[#F2F4F7] pt-2 font-bold text-[#003B73]"><span>Safe to spend</span> <span>AED {money(calendar.financialSnapshot.safeToSpendUntilPayday)}</span></div>
               </div>
               <div className="mt-4 space-y-1 text-[10px]">
-                <p>Data freshness: {new Date(calendar.financialSnapshot.asOf).toLocaleString('en-AE')}</p>
+                <p>Exemplar data as of: {new Date(calendar.financialSnapshot.asOf).toLocaleString('en-AE')}</p>
                 <p>Assumptions: {calendar.assumptions.join(' · ')}</p>
               </div>
             </div>

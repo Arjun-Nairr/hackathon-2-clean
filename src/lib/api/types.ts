@@ -52,6 +52,12 @@ export interface MoneyCalendar {
   daysLeft: number;
   nextPaydayDate: string;
   status: CalendarStatus;
+  // Non-income events strictly after the exemplar "as of" day, in day order.
+  // The backend applies the same as-of boundary here as it does to
+  // `currentAvailableBalance` — the frontend must not re-derive this list
+  // from `events` itself (that quietly let a past event, e.g. day-1 rent,
+  // show up as "coming up" again).
+  upcomingCommitments: CalendarEvent[];
 }
 
 export interface ForecastPoint {
@@ -135,11 +141,32 @@ export type ChatNumber = { label: string; valueAed?: number; valuePct?: number; 
 export type ChatRule = { path: string; source: string };
 export type VerdictCard = { type: 'verdict'; comfortBand: 'green' | 'amber' | 'red'; headline: string; numbers: ChatNumber[]; components?: { label: string; valueAed: number; typical?: boolean }[]; whatWouldChangeIt: string[]; rules: ChatRule[]; doNothing: string };
 export type MissingDataCard = { type: 'missing_data'; fields: { key: string; label: string; how: string }[] };
-// Calendar writes and draft confirmation are out of scope for this bundle, so
-// there is deliberately no draft/confirm card type here.
+
+// A chat-proposed calendar change. It is inert until the application's own
+// confirm endpoint applies it — this card never implies the change already
+// happened.
+export type CalendarDraftEventView = {
+  name: string;
+  amountAed: number;
+  direction: 'debit' | 'credit';
+  date: string;
+  recurrence: 'none' | 'monthly' | 'quarterly' | 'yearly';
+  category: string;
+  note?: string;
+};
+export type CalendarDraftCard = {
+  type: 'calendar_draft';
+  draftId: string;
+  action: 'add' | 'update' | 'delete';
+  targetEventId?: string;
+  events: CalendarDraftEventView[];
+  reason: string;
+};
+
 export type ChatCard =
   | VerdictCard
   | MissingDataCard
+  | CalendarDraftCard
   | { type: 'decline' }
   | { type: 'unavailable'; capability: string }
   | { type: 'answer'; source: string };
@@ -160,6 +187,18 @@ export interface ChatResponse {
   messageId: string;
   text: string;
   card: ChatCard;
+}
+
+export interface ConfirmDraftResult {
+  status: 'confirmed';
+  alreadyApplied: boolean;
+  appliedEventIds: string[];
+  calendar: MoneyCalendar;
+  forecast: CalendarForecast;
+}
+
+export interface RejectDraftResult {
+  status: 'rejected';
 }
 
 export interface Commitment {

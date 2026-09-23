@@ -39,6 +39,14 @@ export function useSendChatMessage() {
   });
 }
 
+export function useConfirmCalendarDraft() {
+  return useMutation({ mutationFn: ({ draftId }: { draftId: string }) => apiClient.confirmCalendarDraft(draftId) });
+}
+
+export function useRejectCalendarDraft() {
+  return useMutation({ mutationFn: ({ draftId }: { draftId: string }) => apiClient.rejectCalendarDraft(draftId) });
+}
+
 export const getGetFinancialProfileQueryKey = () => ['financial-profile'] as const;
 export function useGetFinancialProfile() {
   return useQuery({ queryKey: getGetFinancialProfileQueryKey(), queryFn: () => apiClient.getFinancialProfile() });

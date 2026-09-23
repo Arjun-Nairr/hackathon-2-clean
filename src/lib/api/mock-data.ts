@@ -53,6 +53,9 @@ export const MONEY_CALENDAR_FIXTURE: MoneyCalendar = {
     text: 'Forecast needs review',
     detail: 'On-track status depends on confirmation.',
   },
+  // Same as-of boundary as the real engine: strictly after day 10, so the
+  // day-1 rent/school events (already processed) don't show up again here.
+  upcomingCommitments: events.filter((e) => e.kind !== 'income' && e.day > 10),
 };
 
 // GET /calendar-forecast fixture. `points` amounts are the literal month-end

@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "calendar-change-draft.schema.json",
+  "title": "Calendar change draft",
+  "description": "A proposed calendar change. It remains inert until the application confirms the stored draft through the backend.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["draft_id", "action", "reason", "requires_confirmation", "source_message_id"],
+  "properties": {
+    "draft_id": {
+      "type": "string",
+      "minLength": 8
+    },
+    "action": {
+      "type": "string",
+      "enum": ["add", "update", "delete"]
+    },
+    "target_event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Canonical existing event identifier; required for update and delete."
+    },
+    "events": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "$ref": "#/$defs/event"
+      }
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240
+    },
+    "requires_confirmation": {
+      "const": true
+    },
+    "source_message_id": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "$defs": {
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "amount_aed", "direction", "date", "recurrence", "category"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "amount_aed": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["debit", "credit"]
+        },
+        "date": {
+          "type": "string",
+          "format": "date"
+        },
+        "recurrence": {
+          "type": "string",
+          "enum": ["none", "monthly", "quarterly", "yearly"]
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 240
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "action": { "const": "add" }
+        },
+        "required": ["action"]
+      },
+      "then": {
+        "required": ["events"],
+        "properties": {
+          "events": { "minItems": 1 }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": { "const": "update" }
+        },
+        "required": ["action"]
+      },
+      "then": {
+        "required": ["target_event_id", "events"],
+        "properties": {
+          "events": { "minItems": 1, "maxItems": 1 }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": { "const": "delete" }
+        },
+        "required": ["action"]
+      },
+      "then": {
+        "required": ["target_event_id"],
+        "properties": {
+          "events": { "maxItems": 0 }
+        }
+      }
+    }
+  ]
+}

@@ -1,22 +1,31 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ArrowUp, Loader2, MessageCircle, Sparkles, X } from 'lucide-react';
 import { Link } from 'wouter';
-import { getGetMoneyCalendarQueryKey, useGetMoneyCalendar, useSendChatMessage } from '@/lib/api/hooks';
+import { useQueryClient } from '@tanstack/react-query';
+import {
+  getGetCalendarForecastQueryKey,
+  getGetMoneyCalendarQueryKey,
+  useConfirmCalendarDraft,
+  useGetMoneyCalendar,
+  useRejectCalendarDraft,
+  useSendChatMessage,
+} from '@/lib/api/hooks';
 import type { ChatCard } from '@/lib/api/types';
 import { BayzatiMobileShell } from '@/components/bayzati-mobile-shell';
 
 const money = (value: number) => new Intl.NumberFormat('en-AE', { maximumFractionDigits: 2, minimumFractionDigits: value % 1 ? 2 : 0 }).format(value);
 
+type DraftStatus = 'pending' | 'confirmed' | 'rejected';
 type Message =
   | { id: string; role: 'user'; text: string }
-  | { id: string; role: 'assistant'; text: string; card: ChatCard };
+  | { id: string; role: 'assistant'; text: string; card: ChatCard; draftStatus?: DraftStatus };
 
 const quickPrompts = [
-  'A bank offered me AED 80,000 at 3.99% flat over 48 months to replace the car. Can I afford it?',
-  'Everyone says I should buy instead of rent. A 2-bed near me is AED 2 million and I plan to stay 5 more years. Should I?',
-  "What's my tight month?",
+  "What's safe to spend today?",
+  "What's my tightest month this year?",
+  'What goals am I on track for?',
 ];
-const quickLabels = ['Can I afford a loan?', 'Should I rent or buy?', "What's my tight month?"];
+const quickLabels = ['Safe to spend?', 'My tight month?', 'My goals?'];
 
 const bandClass: Record<Extract<ChatCard, { type: 'verdict' }>['comfortBand'], { bar: string; word: string; label: string }> = {
   green: { bar: 'bg-[#12A66A]', word: 'text-[#168657]', label: 'Comfortable' },
@@ -77,7 +86,72 @@ function VerdictCardView({ card }: { card: Extract<ChatCard, { type: 'verdict' }
   );
 }
 
-function AssistantMessage({ message }: { message: Extract<Message, { role: 'assistant' }> }) {
+const recurrenceLabel: Record<Extract<ChatCard, { type: 'calendar_draft' }>['events'][number]['recurrence'], string> = {
+  none: 'one-time',
+  monthly: 'monthly',
+  quarterly: 'quarterly',
+  yearly: 'yearly',
+};
+
+function CalendarDraftCardView({ card, status, onStatusChange }: { card: Extract<ChatCard, { type: 'calendar_draft' }>; status: DraftStatus; onStatusChange: (status: DraftStatus) => void }) {
+  const confirm = useConfirmCalendarDraft();
+  const reject = useRejectCalendarDraft();
+  const queryClient = useQueryClient();
+  const busy = confirm.isPending || reject.isPending;
+
+  const handleConfirm = () => {
+    if (busy || status !== 'pending') return;
+    confirm.mutate(
+      { draftId: card.draftId },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetMoneyCalendarQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getGetCalendarForecastQueryKey() });
+          onStatusChange('confirmed');
+        },
+      },
+    );
+  };
+
+  const handleReject = () => {
+    if (busy || status !== 'pending') return;
+    reject.mutate({ draftId: card.draftId }, { onSuccess: () => onStatusChange('rejected') });
+  };
+
+  const actionLabel = card.action === 'add' ? 'Proposed addition' : card.action === 'update' ? 'Proposed update' : 'Proposed removal';
+
+  return (
+    <article className="rounded-[16px] border border-[#E4E7EC] bg-white p-3.5" data-testid="card-calendar-draft">
+      <p className="text-[10px] font-semibold uppercase tracking-[.12em] text-[#98A2B3]">{actionLabel}</p>
+      {card.events.length > 0 ? (
+        card.events.map((event) => (
+          <div key={event.name} className="mt-2">
+            <p className="text-[15px] font-bold leading-tight text-[#003B73]">{event.name}</p>
+            <p className="mt-0.5 text-[14px] font-semibold tabular-nums text-[#17212B]">{event.direction === 'credit' ? '+' : '−'}AED {money(event.amountAed)}</p>
+            <p className="mt-0.5 text-[11.5px] text-[#667085]">{event.date} · {recurrenceLabel[event.recurrence]} · {event.category}</p>
+          </div>
+        ))
+      ) : (
+        <p className="mt-2 text-[15px] font-bold leading-tight text-[#003B73]">Remove event: {card.targetEventId}</p>
+      )}
+      <p className="mt-3 rounded-[12px] bg-[#EAF6FD] px-3 py-2 text-[11px] leading-4 text-[#003B73]">Nothing changes until you confirm in the app.</p>
+      {status === 'pending' && (
+        <div className="mt-3 flex gap-2">
+          <button type="button" onClick={handleConfirm} disabled={busy} className="min-h-10 flex-1 rounded-xl bg-[#003B73] text-[12px] font-semibold text-white disabled:opacity-50" data-testid="button-confirm-draft">
+            {confirm.isPending ? 'Confirming…' : 'Confirm plan'}
+          </button>
+          <button type="button" onClick={handleReject} disabled={busy} className="min-h-10 flex-1 rounded-xl border border-[#DDE7EC] text-[12px] font-semibold text-[#667085] disabled:opacity-50" data-testid="button-reject-draft">
+            {reject.isPending ? 'Please wait…' : 'Not now'}
+          </button>
+        </div>
+      )}
+      {status === 'confirmed' && <p className="mt-3 text-[12px] font-semibold text-[#12A66A]" data-testid="text-draft-confirmed">Confirmed — your calendar is updated.</p>}
+      {status === 'rejected' && <p className="mt-3 text-[12px] font-semibold text-[#667085]" data-testid="text-draft-rejected">Not applied.</p>}
+    </article>
+  );
+}
+
+function AssistantMessage({ message, onDraftStatusChange }: { message: Extract<Message, { role: 'assistant' }>; onDraftStatusChange: (id: string, status: DraftStatus) => void }) {
   const { card } = message;
   return (
     <div className="space-y-2" data-testid={`message-assistant-${message.id}`}>
@@ -89,8 +163,11 @@ function AssistantMessage({ message }: { message: Extract<Message, { role: 'assi
           <Link href="/onboarding" className="mt-3 inline-flex min-h-10 items-center rounded-xl bg-[#EAF6FD] px-3 text-[12px] font-semibold text-[#003B73]">Open profile</Link>
         </div>
       )}
+      {card.type === 'calendar_draft' && (
+        <CalendarDraftCardView card={card} status={message.draftStatus ?? 'pending'} onStatusChange={(status) => onDraftStatusChange(message.id, status)} />
+      )}
       {card.type === 'decline' && (
-        <p className="rounded-[14px] bg-[#F2F4F7] px-3.5 py-2.5 text-[12px] leading-5 text-[#667085]" data-testid="card-decline">I can only work out a loan, rent vs buy, or your tight month right now.</p>
+        <p className="rounded-[14px] bg-[#F2F4F7] px-3.5 py-2.5 text-[12px] leading-5 text-[#667085]" data-testid="card-decline">I can only answer questions about your calendar, balance, safe-to-spend, or upcoming commitments right now.</p>
       )}
       {card.type === 'unavailable' && (
         <p className="rounded-[14px] bg-[#F2F4F7] px-3.5 py-2.5 text-[12px] leading-5 text-[#667085]" data-testid="card-unavailable">That capability isn’t connected yet.</p>
@@ -117,12 +194,17 @@ export default function ChatPage() {
     const history = messages.slice(-6).map((m) => ({ role: m.role, content: m.text }));
     send.mutate({ data: { sessionId, message: trimmed, history } }, {
       onSuccess: (response) => {
-        setMessages((current) => [...current, { id: response.messageId, role: 'assistant', text: response.text, card: response.card }]);
+        const draftStatus = response.card.type === 'calendar_draft' ? 'pending' : undefined;
+        setMessages((current) => [...current, { id: response.messageId, role: 'assistant', text: response.text, card: response.card, draftStatus }]);
       },
       onError: () => {
         setMessages((current) => [...current, { id: `e-${Date.now()}`, role: 'assistant', text: "I couldn't reach the planner. Your calendar is unchanged — try again in a moment.", card: { type: 'unavailable', capability: 'chat' } }]);
       },
     });
+  };
+
+  const setDraftStatus = (id: string, status: DraftStatus) => {
+    setMessages((current) => current.map((m) => (m.id === id && m.role === 'assistant' ? { ...m, draftStatus: status } : m)));
   };
 
   const submit = (event: FormEvent) => { event.preventDefault(); ask(input); };
@@ -152,7 +234,7 @@ export default function ChatPage() {
           )}
           {messages.map((message) => message.role === 'user'
             ? <p key={message.id} className="ml-8 rounded-[16px] rounded-br-[4px] bg-[#003B73] px-3.5 py-2.5 text-[13px] leading-5 text-white" data-testid={`message-user-${message.id}`}>{message.text}</p>
-            : <AssistantMessage key={message.id} message={message} />)}
+            : <AssistantMessage key={message.id} message={message} onDraftStatusChange={setDraftStatus} />)}
           {send.isPending && <p className="flex items-center gap-2 text-[12px] text-[#667085]" data-testid="chat-thinking"><Loader2 className="size-3.5 animate-spin" /> Checking your calendar…</p>}
           <div ref={endRef} />
         </div>
@@ -163,7 +245,7 @@ export default function ChatPage() {
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); ask(input); } }}
             rows={1}
-            placeholder={calendar ? 'Ask about a loan, rent vs buy, or your month' : 'Loading your calendar…'}
+            placeholder={calendar ? 'Ask about your balance, safe-to-spend, or propose a calendar change' : 'Loading your calendar…'}
             disabled={!calendar}
             className="max-h-32 min-h-11 flex-1 resize-none bg-transparent px-2 py-2.5 text-[13px] text-[#17212B] outline-none"
             data-testid="input-chat"

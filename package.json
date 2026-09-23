@@ -4,18 +4,26 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "start": "pnpm run build && pnpm run serve",
+    "prebuild": "node scripts/clean-dist.mjs",
     "build": "vite build",
-    "preview": "vite preview",
+    "serve": "node --import tsx server/index.ts",
+    "dev:frontend-only": "vite",
+    "preview:frontend-only": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test tests/**/*.test.ts"
+    "test": "node --import tsx --test tests/**/*.test.ts",
+    "db:migrate": "node --import tsx db/migrate.ts",
+    "db:seed": "node --import tsx db/seed.ts"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
     "@radix-ui/react-toast": "^1.2.7",
     "@radix-ui/react-tooltip": "^1.2.0",
     "@tanstack/react-query": "^5.90.21",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "dotenv": "^18.0.3",
+    "express": "^5.2.1",
     "lucide-react": "^0.545.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
@@ -24,6 +32,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.14",
+    "@types/express": "^5.0.6",
     "@types/node": "^25.3.3",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",

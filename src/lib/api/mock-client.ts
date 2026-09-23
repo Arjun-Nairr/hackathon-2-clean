@@ -13,11 +13,13 @@ import type {
   ChatCard,
   ChatRequest,
   ChatResponse,
+  ConfirmDraftResult,
   DocumentImportInput,
   FinancialProfile,
   FinancialProfileInput,
   ImportedRecord,
   ImportsQueue,
+  RejectDraftResult,
 } from './types';
 
 const network = () => new Promise((resolve) => setTimeout(resolve, 260));
@@ -76,6 +78,18 @@ export const mockClient: ApiClient = {
       card: result.card,
     };
     return response;
+  },
+
+  // Calendar drafts only exist against the real server (Bundle 3's chat
+  // endpoint creates them in Neon) — the composition root (./index.ts)
+  // always wires these two to httpClient, so this mock body never actually
+  // runs; it exists only to satisfy the ApiClient shape.
+  async confirmCalendarDraft(): Promise<ConfirmDraftResult> {
+    throw new Error('Calendar drafts require the live server.');
+  },
+
+  async rejectCalendarDraft(): Promise<RejectDraftResult> {
+    throw new Error('Calendar drafts require the live server.');
   },
 
   async getFinancialProfile() {

@@ -11,12 +11,14 @@ import type {
   CalendarForecast,
   ChatRequest,
   ChatResponse,
+  ConfirmDraftResult,
   DocumentImportInput,
   FinancialProfile,
   FinancialProfileInput,
   ImportedRecord,
   ImportsQueue,
   MoneyCalendar,
+  RejectDraftResult,
   RentVsBuyInput,
   RentVsBuyResult,
 } from './types';
@@ -27,6 +29,8 @@ export interface ApiClient {
   checkAffordability(input: AffordabilityInput): Promise<AffordabilityResult>;
   compareRentVsBuy(input: RentVsBuyInput): Promise<RentVsBuyResult>;
   sendChatMessage(request: ChatRequest): Promise<ChatResponse>;
+  confirmCalendarDraft(draftId: string): Promise<ConfirmDraftResult>;
+  rejectCalendarDraft(draftId: string): Promise<RejectDraftResult>;
   getFinancialProfile(): Promise<FinancialProfile | null>;
   saveFinancialProfile(input: FinancialProfileInput): Promise<FinancialProfile>;
   listImports(): Promise<ImportsQueue>;

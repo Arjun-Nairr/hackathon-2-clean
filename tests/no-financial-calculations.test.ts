@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 // Guard against the finance engine sneaking back into the frontend before
@@ -45,8 +45,45 @@ test("hooks import the configured ApiClient from the composition root, never moc
   assert.match(source, /import\s*{\s*apiClient\s*}\s*from\s*['"]\.\/index['"]/);
 });
 
-test("the composition root is the only place that imports mock-client for app wiring", () => {
+test("the composition root is the only place that imports mock-client and http-client for app wiring", () => {
   const source = sourceOf("src/lib/api/index.ts");
   assert.match(source, /import\s*{\s*mockClient\s*}\s*from\s*['"]\.\/mock-client['"]/);
-  assert.match(source, /export const apiClient: ApiClient = mockClient;/);
+  assert.match(source, /import\s*{\s*httpClient\s*}\s*from\s*['"]\.\/http-client['"]/);
+  // Bundle 2: getMoneyCalendar/getCalendarForecast/sendChatMessage are real
+  // HTTP calls; everything else (Loan, Rent-vs-buy, Imports, Goals,
+  // Onboarding) stays on the mock, per this bundle's explicit scope.
+  assert.match(source, /\.\.\.mockClient/);
+  assert.match(source, /getMoneyCalendar:\s*httpClient\.getMoneyCalendar/);
+  assert.match(source, /getCalendarForecast:\s*httpClient\.getCalendarForecast/);
+  assert.match(source, /sendChatMessage:\s*httpClient\.sendChatMessage/);
+});
+
+test("http-client.ts contains no financial calculation — it only relays already-computed server responses", () => {
+  const source = sourceOf("src/lib/api/http-client.ts");
+  for (const forbidden of forbiddenNames) {
+    assert.ok(!source.includes(forbidden), `http-client.ts must not contain "${forbidden}"`);
+  }
+});
+
+function allSourceFiles(dir: string): string[] {
+  const abs = fileURLToPath(new URL(`../${dir}`, import.meta.url));
+  const files: string[] = [];
+  const walk = (relative: string) => {
+    for (const entry of readdirSync(`${abs}/${relative}`, { withFileTypes: true })) {
+      const entryRelative = relative ? `${relative}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(entryRelative);
+      else if (/\.(ts|tsx)$/.test(entry.name)) files.push(`${dir}/${entryRelative}`);
+    }
+  };
+  walk('');
+  return files;
+}
+
+test("no frontend source file imports a Neon or Gemini SDK, or reads their env vars directly", () => {
+  for (const file of allSourceFiles("src")) {
+    const source = sourceOf(file);
+    assert.ok(!source.includes('@neondatabase'), `${file} must not import a Neon SDK`);
+    assert.ok(!/generativelanguage|@google\/generative-ai/.test(source), `${file} must not call Gemini directly`);
+    assert.ok(!source.includes('process.env.DATABASE_URL') && !source.includes('process.env.GEMINI_API_KEY'), `${file} must not read server secrets directly`);
+  }
 });

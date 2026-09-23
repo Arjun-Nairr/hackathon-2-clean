@@ -48,12 +48,18 @@ export function YearAheadRibbon({ compact = false }: { compact?: boolean }) {
 
   const lowestMonth = new Intl.DateTimeFormat('en-AE', { month: 'long', year: 'numeric' }).format(new Date(`${forecast.lowestPoint.date}T00:00:00Z`));
   const tone = forecast.lowestPoint.balance < 0 ? 'text-[#D20A58]' : forecast.lowestPoint.balance < forecast.bufferTarget ? 'text-[#9A6B00]' : 'text-[#12A66A]';
+  const exemplarDateLabel = new Date(forecast.asOf).toLocaleDateString('en-AE', { day: 'numeric', month: 'short', year: 'numeric' });
 
   return (
     <section className="mt-5 rounded-[18px] border border-[#E4E7EC] bg-white p-4" data-testid="section-year-ahead">
+      {!compact && (
+        <p className="mb-3 inline-flex items-center gap-1.5 rounded-full border border-[#DDE7EC] bg-[#F8FAFC] px-3 py-1.5 text-[10px] font-semibold text-[#667085]" data-testid="text-ribbon-demo-date-badge">
+          Demo data — fixed as of {exemplarDateLabel}, not the real current date
+        </p>
+      )}
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[.13em] text-[#98A2B3]">Safe to spend today</p>
+          <p className="text-[10px] font-semibold uppercase tracking-[.13em] text-[#98A2B3]">Safe to spend, {exemplarDateLabel}</p>
           <p className="mt-1 text-[30px] font-bold leading-none tracking-[-.04em] text-[#003B73] tabular-nums" data-testid="text-safe-to-spend-today">AED {money(forecast.safeToSpendToday)}</p>
           {!compact && <p className="mt-2 max-w-[34ch] text-[11px] leading-4 text-[#667085]">{forecast.safeToSpendNote}</p>}
         </div>
