@@ -58,6 +58,28 @@ export function classifyIntent(message: string): Intent {
   return 'decline';
 }
 
+// True for a fresh "add" request with no amount/date given yet ("Add an
+// expense to my calendar.", "Add my rent", the chat page's write-action
+// buttons) — used by chat.ts to answer with a fixed, figure-free
+// clarification instead of sending it to Gemini. In practice, Gemini's own
+// free-text clarifying reply to a request this open-ended has sometimes
+// included an illustrative example figure ("...the amount, e.g. AED 500"),
+// which the number guard then correctly rejects as unverified, surfacing as
+// a false "couldn't verify" outage for a completely ordinary first message.
+// A request that already includes a digit (an amount or date) is
+// specific enough to go straight to Gemini as before; a "remove" request
+// is out of scope here — its disambiguation already comes from real
+// tool-sourced data, not an invented figure.
+export function isUnderspecifiedAddRequest(message: string): boolean {
+  const trimmed = message.trim();
+  if (!trimmed || /\d/.test(trimmed)) return false;
+  const withoutOpener = trimmed.replace(REQUEST_OPENER_PATTERN, '');
+  const first = (withoutOpener.trim().split(/\s+/)[0] ?? '').toLowerCase().replace(/[^a-z]/g, '');
+  const second = (withoutOpener.trim().split(/\s+/)[1] ?? '').toLowerCase().replace(/[^a-z]/g, '');
+  const isAddVerb = first === 'add' && second !== 'up';
+  return isAddVerb || CALENDAR_CHANGE_OPENER_PATTERN.test(trimmed);
+}
+
 export interface HistoryTurn {
   role: 'user' | 'assistant';
   content: string;
@@ -92,14 +114,20 @@ const QUESTION_OPENER_PATTERN = /^(what|who|when|where|why|how|is|are|was|were|d
 // independent signal are more likely a genuinely new, unrelated message.
 const MAX_CONTINUATION_WORDS = 6;
 
-// The recognized shapes of an answer to a calendar-change clarification —
-// used only to credit a continuation regardless of its length; a short
-// reply that matches none of these still gets one chance via the
-// short-phrase fallback (for a free-text removal choice).
+// The recognized shapes of an answer to a calendar-change clarification.
+// Recurrence, type, and classification double as their own "is this field
+// being asked about" signal — a genuine question naturally uses the same
+// vocabulary a valid answer would ("Is this one-time or recurring?").
+// Amount, date, and a removal choice need their own distinct ask-side
+// patterns instead, since a plain digit or free-text event name can't be
+// used to detect that they were asked for.
 const DATE_WORD_PATTERN = /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|today|tomorrow|next\s+\w+)\b/i;
 const RECURRENCE_PATTERN = /\b(one-?time|once|monthly|quarterly|yearly|annually|recurring|every\s+\w+)\b/i;
 const DIRECTION_TYPE_PATTERN = /\b(income|expense|bonus|salary|bills?)\b/i;
 const CLASSIFICATION_PATTERN = /\b(expected|discretionary|emergency)\b/i;
+const AMOUNT_ASK_PATTERN = /\b(amount|how much|price|cost|figure)\b/i;
+const DATE_ASK_PATTERN = /\b(date|when|start\w*)\b/i;
+const REMOVAL_CHOICE_ASK_PATTERN = /\bwhich\s+(one|event|of\s+these)\b|\bdid\s+you\s+mean\b/i;
 
 // Small talk or meta-commentary about the conversation ("hello there",
 // "that sounds confusing") — short and signal-free just like a genuine
@@ -107,20 +135,55 @@ const CLASSIFICATION_PATTERN = /\b(expected|discretionary|emergency)\b/i;
 // open thread.
 const GENERIC_REPLY_PATTERN = /^(hi|hello|hey|hiya|yo)\b|\b(confus\w*|complicat\w*|unclear|lost|unsure)\b/i;
 
-// A genuine clarifying question ("Could you share the amount...?") ends in
-// '?', but not every clarifying turn is phrased as a question — "Please
-// provide the amount and date." asks for the same thing as a statement.
-// This pattern catches that common phrasing without trying to parse
-// arbitrary Gemini output. A completed request's reply (e.g. "I've drafted
-// AED 3,000 monthly school fees — confirm in the app to apply it.") matches
-// neither — that's the only signal available here (history is plain
-// role+text, no card metadata), and it's exactly the signal needed to avoid
-// reviving a request that already got its draft.
+// The phrasing this app's own completed-draft replies consistently use
+// (see chat.ts's system instruction and every calendar_draft fixture in
+// this test suite) — checked first so a completed request is never
+// mistaken for an open one, even if it happens to end in '?' (e.g. Gemini
+// tacking on a pleasantry like "Would you like anything else?") or happens
+// to mention a recurrence/type word while describing what it just drafted.
+const COMPLETED_DRAFT_PATTERN = /\bi(?:'ve|\s+have)\s+prepared\s+a\s+draft\b|\bnothing\s+changes\s+until\s+you\s+confirm\b/i;
+
+// Not every clarifying turn is phrased as a question — "Please provide the
+// amount and date." asks for the same thing as a statement.
 const CLARIFICATION_STATEMENT_PATTERN = /\b(please\s+(provide|share|tell\s+me|give\s+me|specify|confirm)|could\s+you\s+(provide|share|tell\s+me|give\s+me|specify)|i\s+need\s+(the|to\s+know)|let\s+me\s+know)\b/i;
 
-function isClarifyingQuestion(content: string): boolean {
+interface AskedFields {
+  amount: boolean;
+  date: boolean;
+  recurrence: boolean;
+  type: boolean;
+  classification: boolean;
+  removalChoice: boolean;
+}
+
+function hasAnyAskedField(fields: AskedFields): boolean {
+  return fields.amount || fields.date || fields.recurrence || fields.type || fields.classification || fields.removalChoice;
+}
+
+// Whether an assistant turn is a still-open, specific calendar-field
+// clarification — and if so, exactly which field(s) it asked about. A
+// completed-draft reply is never open (regardless of phrasing). A reply
+// that's question-shaped but names no recognized field (e.g. "Would you
+// like anything else?") is not treated as open either — there is nothing
+// for a later short reply to plausibly be answering.
+function openClarification(content: string): { open: boolean; fields: AskedFields } {
   const trimmed = content.trim();
-  return trimmed.endsWith('?') || CLARIFICATION_STATEMENT_PATTERN.test(trimmed);
+  const closed = { open: false, fields: { amount: false, date: false, recurrence: false, type: false, classification: false, removalChoice: false } };
+  if (COMPLETED_DRAFT_PATTERN.test(trimmed)) return closed;
+
+  const isQuestionShaped = trimmed.endsWith('?') || CLARIFICATION_STATEMENT_PATTERN.test(trimmed);
+  if (!isQuestionShaped) return closed;
+
+  const fields: AskedFields = {
+    amount: AMOUNT_ASK_PATTERN.test(trimmed),
+    date: DATE_ASK_PATTERN.test(trimmed),
+    recurrence: RECURRENCE_PATTERN.test(trimmed),
+    type: DIRECTION_TYPE_PATTERN.test(trimmed),
+    classification: CLASSIFICATION_PATTERN.test(trimmed),
+    removalChoice: REMOVAL_CHOICE_ASK_PATTERN.test(trimmed),
+  };
+  if (!hasAnyAskedField(fields)) return closed;
+  return { open: true, fields };
 }
 
 // classifyIntent looks at one message in isolation. A multi-turn calendar
@@ -142,18 +205,22 @@ export function classifyIntentWithHistory(message: string, history: HistoryTurn[
 
   // Only a direct reply to the assistant's own last turn counts — not an
   // unrelated message that happens to arrive after some older calendar
-  // conversation. And it must actually be a clarifying question: a
-  // completed-request reply means there is nothing left open to continue.
+  // conversation. And it must actually be a still-open, specific field
+  // clarification: a completed-request reply, or a generic question that
+  // names no recognized field ("Would you like anything else?"), means
+  // there is nothing left open for this reply to be answering.
   const last = history[history.length - 1];
-  if (!last || last.role !== 'assistant' || !isClarifyingQuestion(last.content)) return 'decline';
+  if (!last || last.role !== 'assistant') return 'decline';
+  const lastClarification = openClarification(last.content);
+  if (!lastClarification.open) return 'decline';
 
   // Walk back from just before that question looking for the request it
   // belongs to — not "any calendar-change message anywhere in history".
   // A short/non-classifiable user reply (answering only part of what was
-  // asked) or another clarifying question keeps the same open thread; any
-  // other assistant reply (a completed draft, a plain answer) means an
-  // earlier request was already resolved, so the walk stops there instead
-  // of crediting a later, unrelated request as still open.
+  // asked) or another open clarification keeps the same thread; any other
+  // assistant reply (a completed draft, a plain answer, a generic
+  // question) means an earlier request was already resolved, so the walk
+  // stops there instead of crediting a later, unrelated request as open.
   let openRequest = false;
   for (let i = history.length - 2; i >= 0; i -= 1) {
     const turn = history[i];
@@ -163,7 +230,7 @@ export function classifyIntentWithHistory(message: string, history: HistoryTurn[
       if (turnIntent !== 'decline') break; // an unrelated topic closes the thread
       continue; // a partial clarification answer — keep looking further back
     }
-    if (!isClarifyingQuestion(turn.content)) break; // a resolved/completed reply closes the thread
+    if (!openClarification(turn.content).open) break; // a resolved/completed/generic reply closes the thread
   }
   if (!openRequest) return 'decline';
 
@@ -173,26 +240,36 @@ export function classifyIntentWithHistory(message: string, history: HistoryTurn[
   // Generic small talk ("hello there") or meta-commentary about the
   // conversation itself ("that sounds confusing") is exactly as short and
   // signal-free as a genuine continuation answer, but doesn't answer
-  // anything the assistant asked — checked before the answer-shaped checks
+  // anything the assistant asked — checked before the field-shaped checks
   // below so it's never mistaken for one.
   if (GENERIC_REPLY_PATTERN.test(trimmed)) return 'decline';
 
-  // A continuation is only credited when the reply plausibly answers one of
-  // the fields a calendar-change clarification actually asks about: an
-  // amount or date (both carry a digit — "AED 4,000", "12 September"), a
-  // month name alone ("September"), a recurrence, an income/expense type,
-  // or an expense classification. This covers every field except a removal
-  // choice, which names an existing event in free text with no fixed
-  // vocabulary ("The credit card minimum") — for that case only, a short
-  // reply that isn't generic small talk is still accepted below.
-  const matchesKnownAnswerField =
-    /\d/.test(trimmed) ||
-    DATE_WORD_PATTERN.test(trimmed) ||
-    RECURRENCE_PATTERN.test(trimmed) ||
-    DIRECTION_TYPE_PATTERN.test(trimmed) ||
-    CLASSIFICATION_PATTERN.test(trimmed);
-  if (matchesKnownAnswerField) return 'calendar_change';
+  // A continuation is credited only when the reply matches the SPECIFIC
+  // field the last clarification actually asked about — not any field a
+  // clarification could ever ask about. A bare digit answers an amount or
+  // date question but not a removal choice; a short free-text phrase
+  // answers a removal choice (no fixed vocabulary exists for an arbitrary
+  // event name) but not an amount question ("the gym membership" is never
+  // a valid amount).
+  const fields = lastClarification.fields;
+  const hasDigit = /\d/.test(trimmed);
+  const matchesAskedField =
+    (fields.amount && hasDigit) ||
+    (fields.date && (hasDigit || DATE_WORD_PATTERN.test(trimmed))) ||
+    (fields.recurrence && RECURRENCE_PATTERN.test(trimmed)) ||
+    (fields.type && DIRECTION_TYPE_PATTERN.test(trimmed)) ||
+    (fields.classification && CLASSIFICATION_PATTERN.test(trimmed));
+  if (matchesAskedField) return 'calendar_change';
 
-  const isShortPhrase = trimmed.split(/\s+/).length <= MAX_CONTINUATION_WORDS;
-  return isShortPhrase ? 'calendar_change' : 'decline';
+  if (fields.removalChoice) {
+    // A removal choice names an existing event in free text — there's no
+    // fixed vocabulary to match against, so a short phrase is accepted as
+    // long as it isn't a bare number (an amount is never an event choice)
+    // or generic small talk (already ruled out above).
+    const hasLetters = /[a-z]/i.test(trimmed);
+    const isShortPhrase = trimmed.split(/\s+/).length <= MAX_CONTINUATION_WORDS;
+    return hasLetters && isShortPhrase ? 'calendar_change' : 'decline';
+  }
+
+  return 'decline';
 }

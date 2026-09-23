@@ -300,7 +300,7 @@ test("a draft persisted before a later failure in the same turn is rejected, not
         { text: "Actually, on top of that your balance is now AED 999,999 short." },
       ],
       async () => {
-        await assert.rejects(() => answerChatMessage("Add a bonus", [], PROFILE, events, sourceMessageId));
+        await assert.rejects(() => answerChatMessage("Add a one-time AED 500 bonus on 28 September 2026.", [], PROFILE, events, sourceMessageId));
       },
     );
     const rows = await sql()`select status from calendar_drafts where source_message_id = ${sourceMessageId}`;
@@ -308,6 +308,26 @@ test("a draft persisted before a later failure in the same turn is rejected, not
     assert.equal(rows[0]?.status, "rejected", "a draft orphaned by a same-turn failure must be rejected, never left pending");
   } finally {
     await sql()`delete from calendar_drafts where source_message_id = ${sourceMessageId}`;
+  }
+});
+
+test("an underspecified add request creates no draft and no calendar mutation — confirmation stays mandatory", async () => {
+  const sourceMessageId = `test-underspecified-add-${randomUUID()}`;
+  const original = globalThis.fetch;
+  let geminiCalled = false;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes('generativelanguage.googleapis.com')) { geminiCalled = true; throw new Error('should not be called'); }
+    return original(input, init);
+  }) as typeof fetch;
+  try {
+    const result = await answerChatMessage("Add an expense to my calendar.", [], PROFILE, events, sourceMessageId);
+    assert.equal(result.card.type, "answer");
+    assert.equal(geminiCalled, false);
+    const drafts = await sql()`select 1 from calendar_drafts where source_message_id = ${sourceMessageId}`;
+    assert.equal(drafts.length, 0, "an underspecified request must never create a pending draft");
+  } finally {
+    globalThis.fetch = original;
   }
 });
 
@@ -329,7 +349,7 @@ test("a second write-tool call in the same turn cannot create a second draft", a
       },
       { text: "I have prepared a draft. Nothing changes until you confirm in the app." },
     ],
-    () => answerChatMessage("Add a bonus", [], PROFILE, events, sourceMessageId),
+    () => answerChatMessage("Add a one-time AED 100 bonus on 28 September 2026.", [], PROFILE, events, sourceMessageId),
   );
   assert.equal(result.card.type, "calendar_draft");
   try {

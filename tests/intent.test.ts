@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { classifyIntent, classifyIntentWithHistory, type HistoryTurn } from "../api/_lib/intent";
+import { classifyIntent, classifyIntentWithHistory, isUnderspecifiedAddRequest, type HistoryTurn } from "../api/_lib/intent";
 
 test('"billion" does not match the whole word "bill" — an unrelated question keeps declining', () => {
   assert.equal(classifyIntent("Is a unicorn company worth a billion dirhams?"), "decline");
@@ -222,6 +222,61 @@ test("existing natural add/remove requests still work after the correction pass"
   assert.equal(classifyIntent("Remove the card minimum event."), "calendar_change");
   assert.equal(classifyIntent("I want to add a bonus"), "calendar_change");
   assert.equal(classifyIntent("Help me remove this payment"), "calendar_change");
+});
+
+test('"the gym membership" does not answer an amount clarification (field-specific, not any short phrase)', () => {
+  const history: HistoryTurn[] = [
+    { role: "user", content: "Add school fees" },
+    { role: "assistant", content: "What's the amount?" },
+  ];
+  assert.equal(classifyIntentWithHistory("the gym membership", history), "decline");
+});
+
+test('"looks good" does not answer an amount clarification', () => {
+  const history: HistoryTurn[] = [
+    { role: "user", content: "Add school fees" },
+    { role: "assistant", content: "What's the amount?" },
+  ];
+  assert.equal(classifyIntentWithHistory("looks good", history), "decline");
+});
+
+test('"4000" does not answer a removal-choice clarification (a number is never an event choice)', () => {
+  const history: HistoryTurn[] = [
+    { role: "user", content: "Remove my subscription" },
+    { role: "assistant", content: "You have two subscriptions — the gym membership and the streaming service. Which one did you mean?" },
+  ];
+  assert.equal(classifyIntentWithHistory("4000", history), "decline");
+});
+
+test('a completed draft ending with "Would you like anything else?" is not revived', () => {
+  const history: HistoryTurn[] = [
+    { role: "user", content: "Add school fees" },
+    { role: "assistant", content: "I've prepared a draft to add AED 3,000 monthly school fees starting 1 Oct 2026. Nothing changes until you confirm in the app. Would you like anything else?" },
+  ];
+  assert.equal(classifyIntentWithHistory("4000", history), "decline");
+  assert.equal(classifyIntentWithHistory("monthly", history), "decline");
+});
+
+test('a generic assistant question ("Would you like anything else?") alone does not open a thread', () => {
+  const history: HistoryTurn[] = [
+    { role: "user", content: "What's my tightest month?" },
+    { role: "assistant", content: "March 2027. Would you like anything else?" },
+  ];
+  assert.equal(classifyIntentWithHistory("4000", history), "decline");
+});
+
+test("isUnderspecifiedAddRequest identifies a fresh add request with no amount/date yet", () => {
+  assert.equal(isUnderspecifiedAddRequest("Add an expense to my calendar."), true);
+  assert.equal(isUnderspecifiedAddRequest("Add an income source to my calendar."), true);
+  assert.equal(isUnderspecifiedAddRequest("Add my rent"), true);
+  assert.equal(isUnderspecifiedAddRequest("I'm receiving a bonus tomorrow."), true);
+});
+
+test("isUnderspecifiedAddRequest is false once an amount/date is given, or for a removal", () => {
+  assert.equal(isUnderspecifiedAddRequest("Add AED 1,200 as a monthly expense starting 1 Oct 2026."), false);
+  assert.equal(isUnderspecifiedAddRequest("Add school fees on 1 October."), false);
+  assert.equal(isUnderspecifiedAddRequest("Remove an expense or income source from my calendar."), false);
+  assert.equal(isUnderspecifiedAddRequest("Can you add up my bills?"), false);
 });
 
 test("no continuation is applied without an open calendar_change thread, or without an assistant turn to answer", () => {

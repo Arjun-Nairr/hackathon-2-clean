@@ -8,7 +8,7 @@
 import { randomUUID } from 'node:crypto';
 import { buildCalendarForecast, buildMoneyCalendar, type EventRow, type ProfileRow } from './finance-engine.js';
 import { callGemini, GeminiError, type GeminiContent } from './gemini.js';
-import { classifyIntentWithHistory } from './intent.js';
+import { classifyIntentWithHistory, isUnderspecifiedAddRequest } from './intent.js';
 import { loadSkill } from './skill.js';
 import { ALL_TOOLS, READ_TOOLS, executeTool, type ToolExecution } from './tools.js';
 import { markDraftRejected } from './drafts-repository.js';
@@ -71,6 +71,23 @@ export async function answerChatMessage(
     return {
       text: "That's outside what I can compute from your calendar yet. Ask about safe-to-spend, your tight month, upcoming commitments, or propose a calendar change.",
       card: { type: 'decline' },
+    };
+  }
+
+  // A fresh "add" request with no amount/date yet ("Add an expense to my
+  // calendar.") is deliberately answered with a fixed, figure-free
+  // clarification instead of being sent to Gemini at all. Gemini's own
+  // free-text clarifying reply to a request this open-ended has, in
+  // practice, sometimes included an illustrative example figure ("...the
+  // amount, e.g. AED 500"), which the number guard below then correctly
+  // rejects as unverified — a real financial answer never gets weaker
+  // guarding, but this specific turn never needs to risk one at all. Once
+  // the user replies with real details, classifyIntentWithHistory restores
+  // calendar_change for that follow-up and it goes to Gemini normally.
+  if (intent === 'calendar_change' && isUnderspecifiedAddRequest(trimmed)) {
+    return {
+      text: "To add this, I need a few details: the amount in AED, the date (or start date if it repeats), whether it's one-time or recurring (monthly, quarterly, or yearly), and whether it's income or an expense. For an expense, let me know if it's expected, discretionary, or an emergency.",
+      card: { type: 'answer', source: 'deterministic' },
     };
   }
 
