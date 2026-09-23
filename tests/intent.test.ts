@@ -137,6 +137,93 @@ test("an unrelated topic between an old resolved request and a later question is
   assert.equal(classifyIntentWithHistory("in September", history), "decline");
 });
 
+test('a bare numeric reply ("4000") continues an open amount clarification, not treated as filler', () => {
+  const history: HistoryTurn[] = [
+    { role: "user", content: "Add school fees" },
+    { role: "assistant", content: "What's the amount?" },
+  ];
+  assert.equal(classifyIntentWithHistory("4000", history), "calendar_change");
+});
+
+test('an "AED 4,000" reply continues an open amount clarification', () => {
+  const history: HistoryTurn[] = [
+    { role: "user", content: "Add school fees" },
+    { role: "assistant", content: "What's the amount?" },
+  ];
+  assert.equal(classifyIntentWithHistory("AED 4,000", history), "calendar_change");
+});
+
+test('a date-like reply ("12 September") continues an open date clarification', () => {
+  const history: HistoryTurn[] = [
+    { role: "user", content: "Add school fees" },
+    { role: "assistant", content: "What date should it start?" },
+  ];
+  assert.equal(classifyIntentWithHistory("12 September", history), "calendar_change");
+});
+
+test('a recurrence reply ("monthly") continues an open recurrence clarification', () => {
+  const history: HistoryTurn[] = [
+    { role: "user", content: "Add school fees" },
+    { role: "assistant", content: "Is this one-time or recurring?" },
+  ];
+  assert.equal(classifyIntentWithHistory("monthly", history), "calendar_change");
+});
+
+test("a named event chosen for removal continues an open removal request", () => {
+  const history: HistoryTurn[] = [
+    { role: "user", content: "Remove my subscription" },
+    { role: "assistant", content: "You have two subscriptions — the gym membership and the streaming service. Which one did you mean?" },
+  ];
+  assert.equal(classifyIntentWithHistory("the gym membership", history), "calendar_change");
+});
+
+test('generic small talk ("hello there") does not revive an open calendar_change thread', () => {
+  const history: HistoryTurn[] = [
+    { role: "user", content: "Add school fees" },
+    { role: "assistant", content: "What's the amount?" },
+  ];
+  assert.equal(classifyIntentWithHistory("hello there", history), "decline");
+});
+
+test('meta-commentary about the conversation ("that sounds confusing") does not revive an open thread', () => {
+  const history: HistoryTurn[] = [
+    { role: "user", content: "Add school fees" },
+    { role: "assistant", content: "What's the amount?" },
+  ];
+  assert.equal(classifyIntentWithHistory("that sounds confusing", history), "decline");
+});
+
+test('a clarification phrased as a statement, not a question ("Please provide the amount and date.") still counts as open', () => {
+  const history: HistoryTurn[] = [
+    { role: "user", content: "Add school fees" },
+    { role: "assistant", content: "Please provide the amount and date." },
+  ];
+  assert.equal(classifyIntentWithHistory("4000", history), "calendar_change");
+});
+
+test("a completed draft is not revived by a numeric-looking reply either", () => {
+  const history: HistoryTurn[] = [
+    { role: "user", content: "Add school fees" },
+    { role: "assistant", content: "I've prepared a draft to add AED 3,000 monthly school fees starting 1 Oct 2026. Nothing changes until you confirm in the app." },
+  ];
+  assert.equal(classifyIntentWithHistory("4000", history), "decline");
+});
+
+test('"Can you add up my bills?" means calculate/summarize, not a write request', () => {
+  assert.equal(classifyIntent("Can you add up my bills?"), "read");
+});
+
+test("a hypothetical read question about adding something does not mutate", () => {
+  assert.equal(classifyIntent("What happens if I add a bonus, would it change my safe-to-spend?"), "read");
+});
+
+test("existing natural add/remove requests still work after the correction pass", () => {
+  assert.equal(classifyIntent("Add a one-time AED 5,000 bonus on 28 Sep 2026."), "calendar_change");
+  assert.equal(classifyIntent("Remove the card minimum event."), "calendar_change");
+  assert.equal(classifyIntent("I want to add a bonus"), "calendar_change");
+  assert.equal(classifyIntent("Help me remove this payment"), "calendar_change");
+});
+
 test("no continuation is applied without an open calendar_change thread, or without an assistant turn to answer", () => {
   const noOpenThread: HistoryTurn[] = [
     { role: "user", content: "What's safe to spend today?" },
