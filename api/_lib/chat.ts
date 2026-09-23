@@ -8,7 +8,7 @@
 import { randomUUID } from 'node:crypto';
 import { buildCalendarForecast, buildMoneyCalendar, type EventRow, type ProfileRow } from './finance-engine.js';
 import { callGemini, GeminiError, type GeminiContent } from './gemini.js';
-import { classifyIntent } from './intent.js';
+import { classifyIntentWithHistory } from './intent.js';
 import { loadSkill } from './skill.js';
 import { ALL_TOOLS, READ_TOOLS, executeTool, type ToolExecution } from './tools.js';
 import { extractNumbers, findUnsupportedMonetaryClaims } from './number-guard.js';
@@ -42,7 +42,10 @@ export async function answerChatMessage(
   sourceMessageId: string = randomUUID(),
 ): Promise<ChatResult> {
   const trimmed = message.trim().slice(0, MAX_MESSAGE_LENGTH);
-  const intent = classifyIntent(trimmed);
+  // History-aware: restores calendar_change for a follow-up answer to an
+  // earlier unresolved add/remove request (see intent.ts), without the
+  // user repeating "add"/"remove".
+  const intent = classifyIntentWithHistory(trimmed, history);
 
   // Missing-data check: this bundle has no goals table yet, so a goal
   // question is answered honestly rather than guessed or sent to Gemini.
@@ -126,6 +129,18 @@ export async function answerChatMessage(
     if (!callPart) {
       finalText = modelContent.parts.map((p) => p.text ?? '').join('').trim();
       break;
+    }
+
+    // At most one draft per assistant turn: once a draft exists, refuse a
+    // second create_calendar_draft call rather than executing it — this
+    // stops a second pending row from ever being written (and left
+    // orphaned, since only the first draft's card is ever shown).
+    if (callPart.name === 'create_calendar_draft' && draftCreated) {
+      contents.push({
+        role: 'user',
+        parts: [{ functionResponse: { name: callPart.name, response: { ok: false, error: 'A draft was already created this turn. Only one draft may be proposed per response — tell the user about the existing draft instead.' } } }],
+      });
+      continue;
     }
 
     const execution = await executeTool(callPart.name, callPart.args, { profile, events, sourceMessageId });

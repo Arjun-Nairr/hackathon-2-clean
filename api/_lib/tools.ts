@@ -61,7 +61,7 @@ export const CREATE_DRAFT_TOOL: GeminiToolDeclaration = {
     properties: {
       action: { type: 'string', enum: ['add', 'delete'] },
       target_event_id: { type: 'string', description: 'Required for "delete": the existing event id from list_upcoming_commitments. Never invent one — if you are not sure of the id, call list_upcoming_commitments first.' },
-      events: { type: 'array', items: eventParameters, description: 'Required for "add" (normally exactly 1 item — one expense or income source at a time). Omit for "delete".' },
+      events: { type: 'array', items: eventParameters, description: 'Required for "add": exactly 1 item — one expense or income source per draft. Omit for "delete".' },
       reason: { type: 'string', description: 'One short sentence describing the change, echoing what the user asked for.' },
     },
     required: ['action', 'reason'],
@@ -190,6 +190,14 @@ export async function executeTool(name: string, args: unknown, ctx: ToolContext)
         if (!targetId || !ctx.events.some((e) => e.id === targetId)) {
           return { result: { ok: false, error: `No recorded event with id "${targetId ?? ''}". Call list_upcoming_commitments to find the correct id, or tell the user no matching event was found.` } };
         }
+      }
+
+      // Exactly one expense/income at a time — this app's calendar-change
+      // capability is "add an expense", "add an income source", not batch
+      // entry. The JSON schema/validator still allow up to 12 (compat),
+      // but the model-exposed tool is narrower.
+      if (rawArgs.action === 'add' && (!Array.isArray(rawArgs.events) || rawArgs.events.length !== 1)) {
+        return { result: { ok: false, error: 'action "add" must propose exactly one event. Propose one expense or income source per draft.' } };
       }
 
       // draft_id, requires_confirmation, and source_message_id are always

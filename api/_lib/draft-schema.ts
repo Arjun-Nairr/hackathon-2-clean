@@ -27,6 +27,21 @@ export interface CalendarChangeDraft {
 }
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// The schema's `"format": "date"` means a real calendar date (RFC 3339),
+// not merely four-digit/two-digit/two-digit shaped text — DATE_RE alone
+// would accept "2026-13-99". JS's Date normalizes an out-of-range date
+// instead of rejecting it (e.g. Feb 30 rolls into March), so the fix is to
+// round-trip it and check nothing moved. UTC throughout so the check never
+// depends on the server's local timezone.
+function isValidCalendarDate(iso: string): boolean {
+  if (!DATE_RE.test(iso)) return false;
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d || m < 1 || m > 12 || d < 1 || d > 31) return false;
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+}
+
 const EVENT_KEYS = new Set(['name', 'amount_aed', 'direction', 'date', 'recurrence', 'category', 'note']);
 const DRAFT_KEYS = new Set(['draft_id', 'action', 'target_event_id', 'events', 'reason', 'requires_confirmation', 'source_message_id']);
 
@@ -42,7 +57,7 @@ function validateEvent(raw: unknown, index: number, errors: string[]): DraftEven
   if (typeof e.name !== 'string' || e.name.length < 1 || e.name.length > 80) errors.push(`events[${index}].name must be 1-80 characters`);
   if (typeof e.amount_aed !== 'number' || !(e.amount_aed > 0)) errors.push(`events[${index}].amount_aed must be a positive number`);
   if (e.direction !== 'debit' && e.direction !== 'credit') errors.push(`events[${index}].direction must be "debit" or "credit"`);
-  if (typeof e.date !== 'string' || !DATE_RE.test(e.date)) errors.push(`events[${index}].date must be an ISO date (YYYY-MM-DD)`);
+  if (typeof e.date !== 'string' || !isValidCalendarDate(e.date)) errors.push(`events[${index}].date must be a real ISO calendar date (YYYY-MM-DD)`);
   if (!['none', 'monthly', 'quarterly', 'yearly'].includes(e.recurrence as string)) errors.push(`events[${index}].recurrence must be none, monthly, quarterly, or yearly`);
   if (typeof e.category !== 'string' || e.category.length < 1 || e.category.length > 64) errors.push(`events[${index}].category must be 1-64 characters`);
   if (e.note !== undefined && (typeof e.note !== 'string' || e.note.length > 240)) errors.push(`events[${index}].note must be at most 240 characters`);

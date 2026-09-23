@@ -52,8 +52,14 @@ test("an unsupported tool name returns a controlled unavailable result, not a th
   assert.equal(result.ok, false);
 });
 
-test("create_calendar_draft rejects an incomplete proposal (missing amount/date) instead of writing anything", async () => {
+test("create_calendar_draft rejects a proposal with no events at all", async () => {
   const { result, draftCreated } = await executeTool("create_calendar_draft", { action: "add", reason: "test" }, ctx);
+  assert.equal(result.ok, false);
+  assert.equal(draftCreated, undefined);
+});
+
+test("create_calendar_draft rejects an incomplete proposal (missing amount/date) instead of writing anything", async () => {
+  const { result, draftCreated } = await executeTool("create_calendar_draft", { action: "add", reason: "test", events: [{ name: "Incomplete" }] }, ctx);
   assert.equal(result.ok, false);
   assert.ok(Array.isArray(result.errors) && (result.errors as string[]).length > 0);
   assert.equal(draftCreated, undefined);

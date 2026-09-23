@@ -46,3 +46,67 @@ export function classifyIntent(message: string): Intent {
   }
   return 'decline';
 }
+
+export interface HistoryTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+// A message built only from bare confirmation/cancellation/filler words
+// ("Yes, confirm it.", "Never mind.") answers nothing new — never treated
+// as continuing an open calendar_change thread, even though (like a
+// genuine continuation) it carries no independent classification signal.
+const NON_ANSWER_WORDS = new Set([
+  'yes', 'yeah', 'yep', 'sure', 'ok', 'okay', 'confirm', 'confirmed', 'go', 'ahead',
+  'never', 'mind', 'cancel', 'cancelled', 'canceled', 'forget', 'it', 'nothing',
+  'skip', 'no', 'nope', 'not', 'now', 'thanks', 'thank', 'please', 'that',
+]);
+
+function isNonAnswer(trimmed: string): boolean {
+  const words = trimmed.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/).filter(Boolean);
+  return words.length === 0 || words.every((w) => NON_ANSWER_WORDS.has(w));
+}
+
+// A genuinely new question is never a continuation, no matter how short —
+// "What's the weather?" must not be swept up just because it's brief and
+// shares no keyword with anything.
+const QUESTION_OPENER_PATTERN = /^(what|who|when|where|why|how|is|are|was|were|do|does|did|can|could|would|will|should)\b/i;
+
+// A continuation answer is usually short — a number, a date, or a couple of
+// words naming an event ("The credit card minimum"). Longer replies with no
+// independent signal are more likely a genuinely new, unrelated message.
+const MAX_CONTINUATION_WORDS = 6;
+
+// classifyIntent looks at one message in isolation. A multi-turn calendar
+// change breaks that: "Add school fees" (calendar_change) gets a
+// clarifying question back, and the user's answer — "AED 3,000 monthly
+// from 1 October 2026" — has no calendar verb and no read keyword, so on
+// its own it classifies as `decline`. This layer asks, only for messages
+// that fell through to `decline`, whether the conversation has an
+// unresolved add/remove request the current message could be answering.
+// `history` is exactly what the frontend already sends with each request
+// (session-only React state) — nothing here reads or writes any other
+// storage.
+export function classifyIntentWithHistory(message: string, history: HistoryTurn[]): Intent {
+  const own = classifyIntent(message);
+  if (own !== 'decline') return own;
+
+  const trimmed = message.trim();
+  if (!trimmed || isNonAnswer(trimmed)) return 'decline';
+
+  // Only a direct reply to the assistant's own last turn counts — not an
+  // unrelated message that happens to arrive after some older calendar
+  // conversation.
+  const last = history[history.length - 1];
+  if (!last || last.role !== 'assistant') return 'decline';
+
+  const hadOpenCalendarChange = history.some((turn) => turn.role === 'user' && classifyIntent(turn.content) === 'calendar_change');
+  if (!hadOpenCalendarChange) return 'decline';
+
+  // A new question is never a continuation, however short.
+  if (trimmed.includes('?') || QUESTION_OPENER_PATTERN.test(trimmed)) return 'decline';
+
+  const hasDigit = /\d/.test(trimmed);
+  const isShortPhrase = trimmed.split(/\s+/).length <= MAX_CONTINUATION_WORDS;
+  return hasDigit || isShortPhrase ? 'calendar_change' : 'decline';
+}

@@ -3,6 +3,7 @@ config({ path: ".env.local" });
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { answerChatMessage, UnsupportedClaimError } from "../api/_lib/chat";
 import { sql } from "../api/_lib/db";
 import { EVENTS, PROFILE } from "../db/seed-data";
@@ -191,5 +192,125 @@ test('chat confirmation phrases ("yes", "confirm", "go ahead") are declined dete
     assert.equal(called, false);
   } finally {
     globalThis.fetch = original;
+  }
+});
+
+test("a follow-up answer completes an earlier incomplete add request end-to-end, across two real turns", async () => {
+  const clarifyingQuestion = "Could you share the amount in AED, the date, and whether this is one-time or recurring?";
+
+  const turn1 = await withFakeGeminiSequence([{ text: clarifyingQuestion }], () => answerChatMessage("Add school fees", [], PROFILE, events));
+  assert.equal(turn1.card.type, "answer");
+
+  const history = [
+    { role: "user" as const, content: "Add school fees" },
+    { role: "assistant" as const, content: clarifyingQuestion },
+  ];
+  const turn2 = await withFakeGeminiSequence(
+    [
+      {
+        functionCall: {
+          name: "create_calendar_draft",
+          args: {
+            action: "add",
+            reason: "Add school fees, AED 3,000 monthly from 1 October 2026",
+            events: [{ name: "School fees", amount_aed: 3000, direction: "debit", date: "2026-10-01", recurrence: "monthly", category: "school" }],
+          },
+        },
+      },
+      { text: "I have prepared a draft to add AED 3,000 monthly school fees starting 1 Oct 2026. Nothing changes until you confirm in the app." },
+    ],
+    // The user's own message here ("AED 3,000 monthly from 1 October
+    // 2026") has no calendar verb and no read keyword — only the history
+    // restores calendar_change.
+    () => answerChatMessage("AED 3,000 monthly from 1 October 2026", history, PROFILE, events),
+  );
+  assert.equal(turn2.card.type, "calendar_draft");
+  if (turn2.card.type !== "calendar_draft") return;
+  try {
+    assert.equal(turn2.card.action, "add");
+    assert.equal(turn2.card.events[0]?.amountAed, 3000);
+    assert.equal(turn2.card.events[0]?.recurrence, "monthly");
+  } finally {
+    await cleanupDraft(turn2.card.draftId);
+  }
+});
+
+test("a follow-up choice completes an earlier ambiguous removal end-to-end, across two real turns", async () => {
+  const clarifyingQuestion = "You have two payment events — the credit card minimum and the car loan installment. Which one did you mean?";
+
+  const turn1 = await withFakeGeminiSequence([{ text: clarifyingQuestion }], () => answerChatMessage("Remove my payment", [], PROFILE, events));
+  assert.equal(turn1.card.type, "answer");
+
+  const history = [
+    { role: "user" as const, content: "Remove my payment" },
+    { role: "assistant" as const, content: clarifyingQuestion },
+  ];
+  const turn2 = await withFakeGeminiSequence(
+    [
+      { functionCall: { name: "create_calendar_draft", args: { action: "delete", target_event_id: "card-minimum", reason: "Remove the credit card minimum" } } },
+      { text: "I have prepared a draft to remove the credit card minimum payment. Nothing changes until you confirm in the app." },
+    ],
+    // "The credit card minimum" alone has no calendar verb and no read
+    // keyword — only the history restores calendar_change.
+    () => answerChatMessage("The credit card minimum", history, PROFILE, events),
+  );
+  assert.equal(turn2.card.type, "calendar_draft");
+  if (turn2.card.type !== "calendar_draft") return;
+  try {
+    assert.equal(turn2.card.action, "delete");
+    assert.equal(turn2.card.targetEventId, "card-minimum");
+  } finally {
+    await cleanupDraft(turn2.card.draftId);
+  }
+});
+
+test("an unrelated message after an open calendar_change thread is answered normally, not treated as a continuation", async () => {
+  const clarifyingQuestion = "Could you share the amount in AED, the date, and whether this is one-time or recurring?";
+  const history = [
+    { role: "user" as const, content: "Add school fees" },
+    { role: "assistant" as const, content: clarifyingQuestion },
+  ];
+  await withFakeGeminiSequence(
+    [{ text: "Your safe-to-spend until payday is AED 9,450, about AED 630 a day." }],
+    async () => {
+      const result = await answerChatMessage("What's safe to spend today?", history, PROFILE, events);
+      assert.equal(result.card.type, "answer");
+    },
+  );
+});
+
+test("a second write-tool call in the same turn cannot create a second draft", async () => {
+  const sourceMessageId = `test-second-draft-${randomUUID()}`;
+  const result = await withFakeGeminiSequence(
+    [
+      {
+        functionCall: {
+          name: "create_calendar_draft",
+          args: { action: "add", reason: "first", events: [{ name: "First Bonus", amount_aed: 100, direction: "credit", date: "2026-09-28", recurrence: "none", category: "bonus" }] },
+        },
+      },
+      {
+        functionCall: {
+          name: "create_calendar_draft",
+          args: { action: "add", reason: "second", events: [{ name: "Second Bonus", amount_aed: 200, direction: "credit", date: "2026-09-28", recurrence: "none", category: "bonus" }] },
+        },
+      },
+      { text: "I have prepared a draft. Nothing changes until you confirm in the app." },
+    ],
+    () => answerChatMessage("Add a bonus", [], PROFILE, events, sourceMessageId),
+  );
+  assert.equal(result.card.type, "calendar_draft");
+  try {
+    if (result.card.type === "calendar_draft") {
+      // Only the FIRST attempt's draft is ever shown — the second
+      // create_calendar_draft call must have been refused before it could
+      // execute (and overwrite the tracked draft).
+      assert.equal(result.card.events[0]?.name, "First Bonus");
+    }
+    const drafts = await sql()`select draft_id, payload->'events'->0->>'name' as name from calendar_drafts where source_message_id = ${sourceMessageId}`;
+    assert.equal(drafts.length, 1, "exactly one draft row must exist for this turn, not two");
+    assert.equal(drafts[0]?.name, "First Bonus");
+  } finally {
+    if (result.card.type === "calendar_draft") await cleanupDraft(result.card.draftId);
   }
 });
