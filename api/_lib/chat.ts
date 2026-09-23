@@ -26,6 +26,14 @@ export interface ChatResult {
   card: ChatCard;
 }
 
+// Distinct from GeminiError (network/API/timeout failure): this fires when
+// Gemini DID answer, but the reply contained an AED figure the number
+// guard couldn't verify. api/chat.ts responds to each with a different,
+// honest message instead of collapsing both into "couldn't reach the
+// planner" — that message should only ever mean the model call itself
+// failed.
+export class UnsupportedClaimError extends Error {}
+
 export async function answerChatMessage(
   message: string,
   history: ChatHistoryItem[],
@@ -50,7 +58,7 @@ export async function answerChatMessage(
   // decline checks, never sent to Gemini.
   if (intent === 'unavailable') {
     return {
-      text: "Loan eligibility and rent-vs-buy aren't connected to this chat yet — use the Loan and Rent-vs-buy pages for those.",
+      text: "Loan eligibility and rent-vs-buy aren't calculated from your data in this chat yet — the Loan and Rent-vs-buy pages show a sample walkthrough, not a live calculation.",
       card: { type: 'unavailable', capability: 'loan-or-rent-vs-buy' },
     };
   }
@@ -132,18 +140,20 @@ export async function answerChatMessage(
   }
 
   // Defense in depth: the system prompt and skill both say never to invent
-  // a number, but a prompt is not a guarantee. For a calendar_change turn,
-  // the allow-list also includes numbers the user themselves supplied (a
-  // proposed amount is a fact, not something Gemini invented) and the
-  // amounts in any draft that got created.
+  // a number, but a prompt is not a guarantee. The allow-list always
+  // includes numbers the user themselves supplied in this message (a
+  // figure the user typed is a fact, not something Gemini invented — e.g.
+  // "Can I afford a AED 3,000 TV?" lets Gemini repeat "AED 3,000" back
+  // without tripping the guard). A calendar_change turn additionally
+  // allows the amounts in any draft that got created.
   const allowList =
     intent === 'calendar_change'
       ? [...monetaryAmounts, ...extractNumbers(trimmed), ...(draftCreated?.draft.events?.map((e) => e.amount_aed) ?? [])]
-      : monetaryAmounts;
+      : [...monetaryAmounts, ...extractNumbers(trimmed)];
 
   const unsupported = findUnsupportedMonetaryClaims(finalText, allowList);
   if (unsupported.length > 0) {
-    throw new GeminiError(`Gemini response contained unsupported monetary claim(s): ${unsupported.join(', ')}`);
+    throw new UnsupportedClaimError(`Gemini response contained unsupported monetary claim(s): ${unsupported.join(', ')}`);
   }
 
   if (draftCreated) {
@@ -157,6 +167,7 @@ export async function answerChatMessage(
         targetEventId: d.target_event_id,
         events: (d.events ?? []).map((e) => ({ name: e.name, amountAed: e.amount_aed, direction: e.direction, date: e.date, recurrence: e.recurrence, category: e.category, note: e.note })),
         reason: d.reason,
+        impact: draftCreated.impact,
       },
     };
   }

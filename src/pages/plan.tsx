@@ -42,7 +42,7 @@ export default function PlanHub() {
                   Decision 02
                 </span>
                 <h2 className="text-[19px] font-bold text-[#003B73] group-hover:text-[#139BE8] transition-colors">Can I safely borrow?</h2>
-                <p className="mt-1 text-[12px] leading-5 text-[#667085]">Check UAE legal limits, monthly cash flow, and your buffer resilience.</p>
+                <p className="mt-1 text-[12px] leading-5 text-[#667085]">A sample walkthrough of what an affordability check would weigh.</p>
               </div>
               <span className="grid size-10 shrink-0 place-items-center rounded-full bg-[#F8FAFC] text-[#003B73] transition-colors group-hover:bg-[#139BE8] group-hover:text-white">
                 <ShieldCheck className="size-5" />
@@ -56,7 +56,7 @@ export default function PlanHub() {
             <Link href="/chat" className="rounded-[18px] border border-[#E4E7EC] bg-white p-4 transition-all hover:border-[#139BE8]/50" data-testid="link-plan-chat">
               <p className="text-[10px] font-semibold uppercase tracking-[.14em] text-[#98A2B3]">Ask</p>
               <p className="mt-1 text-[14px] font-bold text-[#003B73]">Decide with your calendar</p>
-              <p className="mt-1 text-[11px] leading-4 text-[#667085]">Loans, rent vs buy, your tight month.</p>
+              <p className="mt-1 text-[11px] leading-4 text-[#667085]">Safe-to-spend, upcoming commitments, and calendar changes.</p>
             </Link>
             <Link href="/learn" className="rounded-[18px] border border-[#E4E7EC] bg-white p-4 transition-all hover:border-[#139BE8]/50" data-testid="link-plan-learn">
               <p className="text-[10px] font-semibold uppercase tracking-[.14em] text-[#98A2B3]">Learn</p>

@@ -34,6 +34,11 @@ test("a mid-sentence verb does not trigger calendar_change (only the first word 
   assert.equal(classifyIntent("What would change my safe-to-spend?"), "read");
 });
 
+test('an income-report opener ("I received...") also classifies as calendar_change, even with no imperative verb', () => {
+  assert.equal(classifyIntent("I received an AED 8,000 bonus today."), "calendar_change");
+  assert.equal(classifyIntent("I got a AED 500 refund yesterday."), "calendar_change");
+});
+
 test("a goal question is missing_data", () => {
   assert.equal(classifyIntent("What goals am I on track for?"), "missing_data");
 });

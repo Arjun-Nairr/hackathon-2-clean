@@ -61,6 +61,9 @@ export default function RentVsBuyPage() {
       </section>
 
       {result ? <section className="mt-4 overflow-hidden rounded-[18px] bg-[#003B73] p-5 text-white" data-testid="section-home-result">
+        <p className="mb-3 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-[10px] font-semibold text-[#EAF6FD]" data-testid="text-rent-vs-buy-sample-label">
+          Sample result — not calculated from your inputs yet
+        </p>
         <span className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[.13em] text-[#EAF6FD]"><span className="size-1.5 rounded-full bg-[#D20A58]" />{result.verdict.replaceAll('-', ' ')}</span>
         <h2 className="mt-4 text-[25px] font-bold leading-tight tracking-[-.04em]" data-testid="text-home-headline">{result.headline}</h2>
         <div className="mt-5 grid grid-cols-3 gap-2">{[['Day-one cash', moneyShort(result.dayOneCash)], ['Owning / month', moneyShort(result.monthlyOwning)], ['Break-even', result.breakEvenYear ? `Year ${result.breakEvenYear}` : 'Never']].map(([label, value]) => <div key={label} className="rounded-xl bg-white/10 p-3"><p className="text-[9px] text-[#C4E5EF]">{label}</p><p className="mt-1 text-[12px] font-semibold">{value}</p></div>)}</div>

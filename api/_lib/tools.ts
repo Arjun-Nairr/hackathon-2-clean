@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { buildCalendarForecast, buildMoneyCalendar, type EventRow, type ProfileRow } from './finance-engine.js';
 import { validateCalendarChangeDraft, type CalendarChangeDraft } from './draft-schema.js';
 import { insertPendingDraft } from './drafts-repository.js';
+import { mapDraftEventToEventRow } from './draft-mapping.js';
 import type { GeminiToolDeclaration } from './gemini.js';
 
 const eventParameters = {
@@ -18,7 +19,11 @@ const eventParameters = {
     date: { type: 'string', description: 'ISO date YYYY-MM-DD. For a recurring item, its first occurrence.' },
     recurrence: { type: 'string', enum: ['none', 'monthly', 'quarterly', 'yearly'] },
     category: { type: 'string', description: 'Short category, e.g. "salary", "housing", "school".' },
-    note: { type: 'string' },
+    note: {
+      type: 'string',
+      description:
+        'Optional. For an expense whose classification is not obvious from its category, start this with "Classification: expected", "Classification: discretionary", or "Classification: emergency" followed by any other detail. Skip for income.',
+    },
   },
   required: ['name', 'amount_aed', 'direction', 'date', 'recurrence', 'category'],
 };
@@ -36,21 +41,27 @@ export const READ_TOOLS: GeminiToolDeclaration[] = [
   },
   {
     name: 'list_upcoming_commitments',
-    description: 'Recorded income and expense events still ahead of the exemplar date, with their event ids.',
+    description: 'Every recorded income and expense event for the exemplar month, with its event id and whether it is still upcoming. Call this before proposing a removal to find the exact id.',
     parameters: { type: 'object', properties: {} },
   },
 ];
 
+// Only "add" and "delete" — this app's model-exposed calendar-write surface
+// deliberately has no "update"/reschedule action. To change an existing
+// event's amount or date, remove it and add the replacement as two
+// separate proposals. The database and validator still understand "update"
+// (see draft-schema.ts, apply-draft.ts) for compatibility, but Gemini is
+// never offered it here.
 export const CREATE_DRAFT_TOOL: GeminiToolDeclaration = {
   name: 'create_calendar_draft',
   description:
-    'Propose adding, updating, or deleting a calendar income or expense event. This only creates a pending draft — it never writes to the calendar. Only call this once every required field is known; otherwise ask the user for the missing one instead.',
+    'Propose adding or deleting a calendar income or expense event. This only creates a pending draft — it never writes to the calendar. Only call this once every required field is known; otherwise ask the user for the missing one instead. There is no update/reschedule action: to change an existing event, propose deleting it and adding the replacement.',
   parameters: {
     type: 'object',
     properties: {
-      action: { type: 'string', enum: ['add', 'update', 'delete'] },
-      target_event_id: { type: 'string', description: 'Required for "update" and "delete": the existing event id from list_upcoming_commitments.' },
-      events: { type: 'array', items: eventParameters, description: 'Required for "add" (>=1 item) and "update" (exactly 1 item). Omit for "delete".' },
+      action: { type: 'string', enum: ['add', 'delete'] },
+      target_event_id: { type: 'string', description: 'Required for "delete": the existing event id from list_upcoming_commitments. Never invent one — if you are not sure of the id, call list_upcoming_commitments first.' },
+      events: { type: 'array', items: eventParameters, description: 'Required for "add" (normally exactly 1 item — one expense or income source at a time). Omit for "delete".' },
       reason: { type: 'string', description: 'One short sentence describing the change, echoing what the user asked for.' },
     },
     required: ['action', 'reason'],
@@ -65,9 +76,63 @@ export interface ToolContext {
   sourceMessageId: string;
 }
 
+export interface DraftImpact {
+  metricLabel: string;
+  before: number;
+  after: number;
+}
+
 export interface ToolExecution {
   result: Record<string, unknown>;
-  draftCreated?: { draftId: string; draft: CalendarChangeDraft };
+  draftCreated?: { draftId: string; draft: CalendarChangeDraft; impact: DraftImpact };
+}
+
+// Which month key (e.g. "2026-10") a month_offset from profile.month falls
+// in — same convention finance-engine.ts's forecast uses for its
+// `monthEnd` keys, so a preview computed here always finds the right entry.
+function monthKeyForOffset(profileMonth: string, offset: number): string {
+  const [y, m] = profileMonth.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1 + offset, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+// The financial impact of a validated add/delete draft, computed purely by
+// running the same deterministic finance engine twice — once on the
+// current events, once on a hypothetical list with the draft applied.
+// Never calculated in React or by Gemini. If the affected month is the
+// exemplar's own month, "safe to spend until payday" is the clearest
+// signal; otherwise (a future-month addition, or deleting a future event)
+// that month's projected month-end balance is, since safe-to-spend
+// wouldn't move at all for a change outside the current month.
+function computeDraftImpact(profile: ProfileRow, events: EventRow[], draft: CalendarChangeDraft): DraftImpact {
+  const before = buildMoneyCalendar(profile, events);
+  const beforeForecast = buildCalendarForecast(profile, events);
+
+  let hypotheticalEvents: EventRow[];
+  let monthOffset = 0;
+
+  if (draft.action === 'delete') {
+    const target = events.find((e) => e.id === draft.target_event_id);
+    monthOffset = target?.monthOffset ?? 0;
+    hypotheticalEvents = events.filter((e) => e.id !== draft.target_event_id);
+  } else {
+    const newRow = mapDraftEventToEventRow((draft.events ?? [])[0]!, `preview-${draft.draft_id}`, profile.month);
+    monthOffset = newRow.monthOffset;
+    hypotheticalEvents = [...events, newRow];
+  }
+
+  const after = buildMoneyCalendar(profile, hypotheticalEvents);
+
+  if (monthOffset === 0) {
+    return { metricLabel: 'Safe to spend until payday', before: before.financialSnapshot.safeToSpendUntilPayday, after: after.financialSnapshot.safeToSpendUntilPayday };
+  }
+  const afterForecast = buildCalendarForecast(profile, hypotheticalEvents);
+  const key = monthKeyForOffset(profile.month, monthOffset);
+  return {
+    metricLabel: `${key} projected month-end balance`,
+    before: beforeForecast.monthEnd[key] ?? beforeForecast.openingBalance,
+    after: afterForecast.monthEnd[key] ?? afterForecast.openingBalance,
+  };
 }
 
 export async function executeTool(name: string, args: unknown, ctx: ToolContext): Promise<ToolExecution> {
@@ -96,19 +161,42 @@ export async function executeTool(name: string, args: unknown, ctx: ToolContext)
         },
       };
 
-    case 'list_upcoming_commitments':
+    case 'list_upcoming_commitments': {
+      const upcomingIds = new Set(calendar.upcomingCommitments.map((e) => e.id));
       return {
         result: {
-          commitments: calendar.upcomingCommitments.map((e) => ({ id: e.id, label: e.label, amount: e.amount, day: e.day, kind: e.kind })),
+          events: calendar.events.map((e) => ({ id: e.id, label: e.label, amount: e.amount, day: e.day, kind: e.kind, upcoming: upcomingIds.has(e.id) })),
         },
       };
+    }
 
     case 'create_calendar_draft': {
+      const rawArgs = typeof args === 'object' && args !== null ? (args as Record<string, unknown>) : {};
+
+      // Defense in depth: the tool's own parameter enum only offers
+      // "add"/"delete" (see CREATE_DRAFT_TOOL above), but nothing stops a
+      // model from sending "update" anyway. Refuse it here too rather than
+      // silently falling through to the validator, which would still
+      // accept "update" for schema/database compatibility.
+      if (rawArgs.action !== 'add' && rawArgs.action !== 'delete') {
+        return { result: { ok: false, error: 'action must be "add" or "delete" — there is no update/reschedule action. Delete the event and add its replacement instead.' } };
+      }
+
+      // Never invent an event id: a "delete" must name a real, currently
+      // recorded event, checked against the same data list_upcoming_
+      // commitments just read from.
+      if (rawArgs.action === 'delete') {
+        const targetId = typeof rawArgs.target_event_id === 'string' ? rawArgs.target_event_id : undefined;
+        if (!targetId || !ctx.events.some((e) => e.id === targetId)) {
+          return { result: { ok: false, error: `No recorded event with id "${targetId ?? ''}". Call list_upcoming_commitments to find the correct id, or tell the user no matching event was found.` } };
+        }
+      }
+
       // draft_id, requires_confirmation, and source_message_id are always
       // server-assigned — Gemini only ever supplies the proposed change
       // itself (action/target/events/reason).
       const candidate = {
-        ...(typeof args === 'object' && args !== null ? args : {}),
+        ...rawArgs,
         draft_id: randomUUID(),
         requires_confirmation: true as const,
         source_message_id: ctx.sourceMessageId,
@@ -118,9 +206,10 @@ export async function executeTool(name: string, args: unknown, ctx: ToolContext)
         return { result: { ok: false, errors: validated.errors } };
       }
       await insertPendingDraft(ctx.profile.id, validated.draft);
+      const impact = computeDraftImpact(ctx.profile, ctx.events, validated.draft);
       return {
-        result: { ok: true, draft_id: validated.draft.draft_id, status: 'pending' },
-        draftCreated: { draftId: validated.draft.draft_id, draft: validated.draft },
+        result: { ok: true, draft_id: validated.draft.draft_id, status: 'pending', impact },
+        draftCreated: { draftId: validated.draft.draft_id, draft: validated.draft, impact },
       };
     }
 

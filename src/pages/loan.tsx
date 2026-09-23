@@ -27,6 +27,9 @@ function ResultPanel({ result }: { result: AffordabilityResult }) {
 
   return (
     <section className="mt-5 overflow-hidden rounded-[18px] border border-[#E4E7EC] bg-white p-4 shadow-sm" data-testid="section-loan-result">
+      <p className="mb-3 inline-flex items-center gap-1.5 rounded-full border border-[#DDE7EC] bg-[#F8FAFC] px-3 py-1.5 text-[10px] font-semibold text-[#667085]" data-testid="text-loan-sample-label">
+        Sample result — not calculated from your inputs yet
+      </p>
       <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[.12em] ${tone}`}>
         <span className={`size-1.5 rounded-full ${dotTone}`} />
         {result.verdict === 'fits-if' ? 'Fits with a condition' : result.verdict === 'fits' ? 'Fits your frame' : 'Not yet'}
@@ -102,7 +105,7 @@ export default function LoanPage() {
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[.16em] text-[#667085]">Decision 02 / Borrowing</p>
             <h1 className="mt-1 text-[28px] font-bold leading-none tracking-[-.04em] text-[#003B73]">Can I safely borrow?</h1>
-            <p className="mt-3 text-[12px] leading-5 text-[#667085]">We check UAE legal limits, your month-by-month cash flow, and the buffer left after upfront cash.</p>
+            <p className="mt-3 text-[12px] leading-5 text-[#667085]">See a sample of what an affordability check weighs: legal limits, month-by-month cash flow, and buffer resilience.</p>
           </div>
         </header>
 
@@ -170,7 +173,7 @@ export default function LoanPage() {
 
           {calendar && (
             <div className="mt-5 border-t border-[#EEF1F3] pt-4 text-[10px] leading-4 text-[#667085]">
-              <span className="font-semibold text-[#003B73]">Using {calendar.monthLabel}.</span> The check runs the instalment through every month of the loan against your calendar.
+              <span className="font-semibold text-[#003B73]">Using {calendar.monthLabel} as the demo exemplar.</span> This shows a sample result — it is not yet calculated from the numbers above.
             </div>
           )}
         </section>

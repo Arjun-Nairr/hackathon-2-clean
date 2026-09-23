@@ -154,6 +154,11 @@ export type CalendarDraftEventView = {
   category: string;
   note?: string;
 };
+// Before/after values from the deterministic finance engine, shown so the
+// user sees the effect of a proposed change before they confirm it. Never
+// computed in the browser or by the model.
+export type CalendarDraftImpact = { metricLabel: string; before: number; after: number };
+
 export type CalendarDraftCard = {
   type: 'calendar_draft';
   draftId: string;
@@ -161,6 +166,7 @@ export type CalendarDraftCard = {
   targetEventId?: string;
   events: CalendarDraftEventView[];
   reason: string;
+  impact: CalendarDraftImpact;
 };
 
 export type ChatCard =

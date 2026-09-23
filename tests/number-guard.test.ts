@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { findUnsupportedMonetaryClaims } from "../api/_lib/number-guard";
 import { answerChatMessage } from "../api/_lib/chat";
-import { GeminiError } from "../api/_lib/gemini";
+import { UnsupportedClaimError } from "../api/_lib/chat";
 import { EVENTS, PROFILE } from "../db/seed-data";
 
 config({ path: ".env.local" });
@@ -52,7 +52,7 @@ test("answerChatMessage refuses a Gemini reply that misattributes the payday day
   await withFakeGeminiReply("You have AED 25 safe to spend today!", async () => {
     await assert.rejects(
       () => answerChatMessage("What's safe to spend today?", [], PROFILE, [...EVENTS]),
-      (err: unknown) => err instanceof GeminiError && err.message.includes("25"),
+      (err: unknown) => err instanceof UnsupportedClaimError && err.message.includes("25"),
     );
   });
 });
@@ -61,7 +61,7 @@ test("answerChatMessage refuses a Gemini reply containing a wholly invented mone
   await withFakeGeminiReply("You're actually AED 99,999 in the red this month!", async () => {
     await assert.rejects(
       () => answerChatMessage("What's safe to spend today?", [], PROFILE, [...EVENTS]),
-      (err: unknown) => err instanceof GeminiError && err.message.includes("99999"),
+      (err: unknown) => err instanceof UnsupportedClaimError && err.message.includes("99999"),
     );
   });
 });

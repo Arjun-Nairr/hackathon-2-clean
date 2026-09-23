@@ -93,6 +93,19 @@ const recurrenceLabel: Record<Extract<ChatCard, { type: 'calendar_draft' }>['eve
   yearly: 'yearly',
 };
 
+// The skill asks the model to prefix a classification onto the free-text
+// `note` field (e.g. "Classification: emergency. Boiler replacement.")
+// rather than adding a new structured field — this splits it back out for
+// display without touching the draft schema.
+const CLASSIFICATION_PATTERN = /^classification:\s*(expected|discretionary|emergency)\.?\s*/i;
+function splitClassification(note?: string): { classification?: string; rest?: string } {
+  if (!note) return {};
+  const match = note.match(CLASSIFICATION_PATTERN);
+  if (!match) return { rest: note };
+  const rest = note.slice(match[0].length).trim();
+  return { classification: match[1]!.toLowerCase(), rest: rest || undefined };
+}
+
 function CalendarDraftCardView({ card, status, onStatusChange }: { card: Extract<ChatCard, { type: 'calendar_draft' }>; status: DraftStatus; onStatusChange: (status: DraftStatus) => void }) {
   const confirm = useConfirmCalendarDraft();
   const reject = useRejectCalendarDraft();
@@ -124,16 +137,31 @@ function CalendarDraftCardView({ card, status, onStatusChange }: { card: Extract
     <article className="rounded-[16px] border border-[#E4E7EC] bg-white p-3.5" data-testid="card-calendar-draft">
       <p className="text-[10px] font-semibold uppercase tracking-[.12em] text-[#98A2B3]">{actionLabel}</p>
       {card.events.length > 0 ? (
-        card.events.map((event) => (
-          <div key={event.name} className="mt-2">
-            <p className="text-[15px] font-bold leading-tight text-[#003B73]">{event.name}</p>
-            <p className="mt-0.5 text-[14px] font-semibold tabular-nums text-[#17212B]">{event.direction === 'credit' ? '+' : '−'}AED {money(event.amountAed)}</p>
-            <p className="mt-0.5 text-[11.5px] text-[#667085]">{event.date} · {recurrenceLabel[event.recurrence]} · {event.category}</p>
-          </div>
-        ))
+        card.events.map((event) => {
+          const { classification, rest } = splitClassification(event.note);
+          return (
+            <div key={event.name} className="mt-2">
+              <p className="text-[15px] font-bold leading-tight text-[#003B73]">{event.name}</p>
+              <p className="mt-0.5 text-[14px] font-semibold tabular-nums text-[#17212B]">{event.direction === 'credit' ? '+' : '−'}AED {money(event.amountAed)}</p>
+              <p className="mt-0.5 text-[11.5px] text-[#667085]">
+                {event.date} · {recurrenceLabel[event.recurrence]} · {event.category}
+                {classification && <> · <span className="capitalize">{classification}</span></>}
+              </p>
+              {rest && <p className="mt-0.5 text-[11px] text-[#98A2B3]">{rest}</p>}
+            </div>
+          );
+        })
       ) : (
         <p className="mt-2 text-[15px] font-bold leading-tight text-[#003B73]">Remove event: {card.targetEventId}</p>
       )}
+      <div className="mt-2 rounded-[12px] bg-[#F8FAFC] px-3 py-2" data-testid="text-draft-impact">
+        <p className="text-[10px] font-semibold uppercase tracking-[.1em] text-[#98A2B3]">{card.impact.metricLabel}</p>
+        <p className="mt-1 text-[12px] text-[#17212B]">
+          <span className="tabular-nums">AED {money(card.impact.before)}</span>
+          <span className="mx-1.5 text-[#98A2B3]">→</span>
+          <span className={`font-semibold tabular-nums ${card.impact.after >= card.impact.before ? 'text-[#12A66A]' : 'text-[#D20A58]'}`}>AED {money(card.impact.after)}</span>
+        </p>
+      </div>
       <p className="mt-3 rounded-[12px] bg-[#EAF6FD] px-3 py-2 text-[11px] leading-4 text-[#003B73]">Nothing changes until you confirm in the app.</p>
       {status === 'pending' && (
         <div className="mt-3 flex gap-2">

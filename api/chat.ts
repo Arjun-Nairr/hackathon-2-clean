@@ -1,7 +1,7 @@
 import type { ApiRequest, ApiResponse } from './_lib/http.js';
 import { sendError } from './_lib/http.js';
 import { loadProfileAndEvents } from './_lib/repository.js';
-import { answerChatMessage } from './_lib/chat.js';
+import { answerChatMessage, UnsupportedClaimError } from './_lib/chat.js';
 import { GeminiError } from './_lib/gemini.js';
 import type { ChatHistoryItem, ChatResponse } from '../src/lib/api/types';
 
@@ -47,6 +47,18 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     };
     res.status(200).json(response);
   } catch (err) {
+    if (err instanceof UnsupportedClaimError) {
+      // The model DID answer — this is the number guard rejecting a figure
+      // it couldn't verify, not a network/API failure. Say so honestly
+      // rather than claiming the planner was unreachable.
+      const response: ChatResponse = {
+        sessionId: parsed.sessionId,
+        messageId,
+        text: "I had an answer, but it included a figure I couldn't verify against your data, so I'm not showing it. Try asking again, or ask about a specific figure like your safe-to-spend or a commitment amount.",
+        card: { type: 'unavailable', capability: 'unverified-figure' },
+      };
+      return res.status(200).json(response);
+    }
     if (err instanceof GeminiError) {
       // Controlled response, not a 500: the calendar is unaffected, the
       // planner just couldn't reach the model this turn.

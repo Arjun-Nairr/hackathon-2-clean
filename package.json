@@ -11,9 +11,10 @@
     "dev:frontend-only": "vite",
     "preview:frontend-only": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test tests/**/*.test.ts",
+    "test": "node --import tsx --test --test-concurrency=1 tests/**/*.test.ts",
     "db:migrate": "node --import tsx db/migrate.ts",
-    "db:seed": "node --import tsx db/seed.ts"
+    "db:seed": "node --import tsx db/seed.ts",
+    "db:reset-demo": "node --import tsx db/reset-demo.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
