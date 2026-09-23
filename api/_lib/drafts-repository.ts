@@ -1,5 +1,5 @@
-import { sql } from './db';
-import type { CalendarChangeDraft } from './draft-schema';
+import { sql } from './db.js';
+import type { CalendarChangeDraft } from './draft-schema.js';
 
 export interface DraftRow {
   draftId: string;

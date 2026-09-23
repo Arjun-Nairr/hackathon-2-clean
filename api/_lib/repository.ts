@@ -1,5 +1,5 @@
-import { sql } from './db';
-import type { EventRow, ProfileRow } from './finance-engine';
+import { sql } from './db.js';
+import type { EventRow, ProfileRow } from './finance-engine.js';
 
 const PROFILE_ID = 'rohan-mehta';
 

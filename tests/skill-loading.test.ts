@@ -23,7 +23,7 @@ test("loadSkill caches — a second call returns the identical string instance's
 test("chat.ts loads the skill once and includes it in Gemini's system instruction", () => {
   const path = fileURLToPath(new URL("../api/_lib/chat.ts", import.meta.url));
   const source = readFileSync(path, "utf8");
-  assert.match(source, /import\s*\{\s*loadSkill\s*\}\s*from\s*'\.\/skill'/);
+  assert.match(source, /import\s*\{\s*loadSkill\s*\}\s*from\s*'\.\/skill\.js'/);
   assert.match(source, /const skill = loadSkill\(\)/);
   assert.match(source, /systemInstruction = \[\s*\n\s*skill,/);
 });

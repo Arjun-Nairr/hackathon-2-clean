@@ -2,9 +2,9 @@
 // this module — reached only from the application's own confirm endpoint —
 // ever writes calendar_events for a chat-proposed change; chat text never
 // does, and a pending draft alone never does either.
-import { sql } from './db';
-import { getDraft } from './drafts-repository';
-import { validateCalendarChangeDraft, type CalendarChangeDraft, type DraftEvent } from './draft-schema';
+import { sql } from './db.js';
+import { getDraft } from './drafts-repository.js';
+import { validateCalendarChangeDraft, type CalendarChangeDraft, type DraftEvent } from './draft-schema.js';
 
 function recurrenceToIntervalMonths(recurrence: DraftEvent['recurrence']): number {
   if (recurrence === 'monthly') return 1;

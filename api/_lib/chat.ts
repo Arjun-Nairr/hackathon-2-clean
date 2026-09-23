@@ -6,12 +6,12 @@
 // propose a change via create_calendar_draft, which only ever produces a
 // *pending* draft (see tools.ts / drafts-repository.ts).
 import { randomUUID } from 'node:crypto';
-import { buildCalendarForecast, buildMoneyCalendar, type EventRow, type ProfileRow } from './finance-engine';
-import { callGemini, GeminiError, type GeminiContent } from './gemini';
-import { classifyIntent } from './intent';
-import { loadSkill } from './skill';
-import { ALL_TOOLS, READ_TOOLS, executeTool, type ToolExecution } from './tools';
-import { extractNumbers, findUnsupportedMonetaryClaims } from './number-guard';
+import { buildCalendarForecast, buildMoneyCalendar, type EventRow, type ProfileRow } from './finance-engine.js';
+import { callGemini, GeminiError, type GeminiContent } from './gemini.js';
+import { classifyIntent } from './intent.js';
+import { loadSkill } from './skill.js';
+import { ALL_TOOLS, READ_TOOLS, executeTool, type ToolExecution } from './tools.js';
+import { extractNumbers, findUnsupportedMonetaryClaims } from './number-guard.js';
 import type { ChatCard, ChatHistoryItem } from '../../src/lib/api/types';
 
 const MAX_HISTORY = 6;

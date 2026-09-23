@@ -4,10 +4,10 @@
 // and repository data every other endpoint uses — no calculation is
 // duplicated here.
 import { randomUUID } from 'node:crypto';
-import { buildCalendarForecast, buildMoneyCalendar, type EventRow, type ProfileRow } from './finance-engine';
-import { validateCalendarChangeDraft, type CalendarChangeDraft } from './draft-schema';
-import { insertPendingDraft } from './drafts-repository';
-import type { GeminiToolDeclaration } from './gemini';
+import { buildCalendarForecast, buildMoneyCalendar, type EventRow, type ProfileRow } from './finance-engine.js';
+import { validateCalendarChangeDraft, type CalendarChangeDraft } from './draft-schema.js';
+import { insertPendingDraft } from './drafts-repository.js';
+import type { GeminiToolDeclaration } from './gemini.js';
 
 const eventParameters = {
   type: 'object',

@@ -1,4 +1,4 @@
-import { getGeminiApiKey } from './env';
+import { getGeminiApiKey } from './env.js';
 
 // Direct REST calls (no SDK dependency) to one Gemini Flash-class model.
 // Bounded input (system+context+history truncated before this is called),

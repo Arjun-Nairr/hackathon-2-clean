@@ -1,8 +1,8 @@
-import type { ApiRequest, ApiResponse } from '../../_lib/http';
-import { sendError } from '../../_lib/http';
-import { loadProfileAndEvents } from '../../_lib/repository';
-import { confirmDraft } from '../../_lib/apply-draft';
-import { buildCalendarForecast, buildMoneyCalendar } from '../../_lib/finance-engine';
+import type { ApiRequest, ApiResponse } from '../../_lib/http.js';
+import { sendError } from '../../_lib/http.js';
+import { loadProfileAndEvents } from '../../_lib/repository.js';
+import { confirmDraft } from '../../_lib/apply-draft.js';
+import { buildCalendarForecast, buildMoneyCalendar } from '../../_lib/finance-engine.js';
 
 function readDraftId(query: ApiRequest['query']): string | undefined {
   const raw = query.draftId;

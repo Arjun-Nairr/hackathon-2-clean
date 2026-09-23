@@ -1,5 +1,5 @@
 import { neon, type NeonQueryFunction } from '@neondatabase/serverless';
-import { getDatabaseUrl } from './env';
+import { getDatabaseUrl } from './env.js';
 
 // One lazily-created Neon client, reused across handler invocations. Neon's
 // serverless driver talks HTTP, so this is safe in both a Vercel function

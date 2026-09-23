@@ -1,8 +1,8 @@
-import type { ApiRequest, ApiResponse } from './_lib/http';
-import { sendError } from './_lib/http';
-import { loadProfileAndEvents } from './_lib/repository';
-import { answerChatMessage } from './_lib/chat';
-import { GeminiError } from './_lib/gemini';
+import type { ApiRequest, ApiResponse } from './_lib/http.js';
+import { sendError } from './_lib/http.js';
+import { loadProfileAndEvents } from './_lib/repository.js';
+import { answerChatMessage } from './_lib/chat.js';
+import { GeminiError } from './_lib/gemini.js';
 import type { ChatHistoryItem, ChatResponse } from '../src/lib/api/types';
 
 interface ChatRequestBody {

@@ -1,6 +1,6 @@
-import type { ApiRequest, ApiResponse } from '../../_lib/http';
-import { sendError } from '../../_lib/http';
-import { getDraft, markDraftRejected } from '../../_lib/drafts-repository';
+import type { ApiRequest, ApiResponse } from '../../_lib/http.js';
+import { sendError } from '../../_lib/http.js';
+import { getDraft, markDraftRejected } from '../../_lib/drafts-repository.js';
 
 function readDraftId(query: ApiRequest['query']): string | undefined {
   const raw = query.draftId;
