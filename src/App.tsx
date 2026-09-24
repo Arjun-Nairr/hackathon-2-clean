@@ -13,6 +13,7 @@ import ChatPage from '@/pages/chat';
 import LearnPage from '@/pages/learn';
 import OnboardingPage from '@/pages/onboarding';
 import ImportHub from '@/pages/import-hub';
+import BankStatementPage from '@/pages/bank-statement';
 import NotFound from '@/pages/not-found';
 import {
   Route,
@@ -37,6 +38,7 @@ function Router() {
         <Route path="/chat" component={ChatPage} />
         <Route path="/learn" component={LearnPage} />
         <Route path="/imports" component={ImportHub} />
+        <Route path="/profile/bank-statement" component={BankStatementPage} />
         <Route component={NotFound} />
       </Switch>
     </RoutedErrorBoundary>
