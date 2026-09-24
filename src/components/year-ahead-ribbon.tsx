@@ -4,13 +4,19 @@ import { getGetCalendarForecastQueryKey, useGetCalendarForecast } from '@/lib/ap
 import type { CalendarForecast } from '@/lib/api/types';
 
 const money = (value: number) => new Intl.NumberFormat('en-AE', { maximumFractionDigits: 0 }).format(Math.round(value));
+
+// Shared by the graph marks and the legend swatches so the two can't drift.
+const BALANCE_COLOR = '#003B73';
+const INCOME_COLOR = '#12A66A';
+const EXPENSE_COLOR = '#D20A58';
+const BUFFER_COLOR = '#9A6B00';
 const longDate = (value: string) => {
   const [year, month, day] = value.split('-').map(Number);
   return new Intl.DateTimeFormat('en-AE', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(Date.UTC(year, month - 1, day)));
 };
 
 function Ribbon({ forecast }: { forecast: CalendarForecast }) {
-  const { path, dots, low, min, max } = useMemo(() => {
+  const { path, dots, low, min, max, bufferY } = useMemo(() => {
     const points = forecast.points;
     const values = [forecast.openingBalance, ...points.map((p) => p.balanceAfter)];
     const min = Math.min(0, ...values);
@@ -27,16 +33,35 @@ function Ribbon({ forecast }: { forecast: CalendarForecast }) {
       .map((p, index) => ({ p, index }))
       .filter(({ p }) => Math.abs(p.amount) >= 10_000)
       .map(({ p, index }) => ({ x: x(index + 1), y: y(p.balanceAfter), credit: p.amount > 0, label: p.label }));
-    return { path, dots, low, min, max };
+    // Only drawn when the buffer falls inside the plotted range — a line
+    // clamped to the edge would misstate where the buffer sits.
+    const bufferY = forecast.bufferTarget >= min && forecast.bufferTarget <= max ? y(forecast.bufferTarget) : null;
+    return { path, dots, low, min, max, bufferY };
   }, [forecast]);
 
   return (
-    <svg viewBox="0 0 320 96" className="mt-3 h-24 w-full" role="img" aria-label={`Projected balance for the next ${forecast.horizonMonths} months. Lowest point AED ${money(forecast.lowestPoint.balance)} on ${longDate(forecast.lowestPoint.date)}.`}>
-      {min < 0 && <line x1="0" x2="320" y1={96 - 6 - ((0 - min) / (max - min || 1)) * 84} y2={96 - 6 - ((0 - min) / (max - min || 1)) * 84} stroke="#D20A58" strokeDasharray="3 3" strokeWidth="1" />}
-      <path d={path} fill="none" stroke="#003B73" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-      {dots.map((dot, index) => <circle key={index} cx={dot.x} cy={dot.y} r="2.5" fill={dot.credit ? '#12A66A' : '#D20A58'}><title>{dot.label}</title></circle>)}
-      <circle cx={low.x} cy={low.y} r="5" fill="#FFFFFF" stroke="#D20A58" strokeWidth="2" />
-    </svg>
+    <>
+      <svg viewBox="0 0 320 96" className="mt-3 h-24 w-full" role="img" aria-label={`Projected balance for the next ${forecast.horizonMonths} months. Lowest point AED ${money(forecast.lowestPoint.balance)} on ${longDate(forecast.lowestPoint.date)}. Protected buffer AED ${money(forecast.bufferTarget)}.`}>
+        {min < 0 && <line x1="0" x2="320" y1={96 - 6 - ((0 - min) / (max - min || 1)) * 84} y2={96 - 6 - ((0 - min) / (max - min || 1)) * 84} stroke={EXPENSE_COLOR} strokeDasharray="3 3" strokeWidth="1" />}
+        {bufferY !== null && (
+          <line x1="0" x2="320" y1={bufferY} y2={bufferY} stroke={BUFFER_COLOR} strokeDasharray="4 3" strokeWidth="1" data-testid="line-protected-buffer">
+            <title>Protected buffer AED {money(forecast.bufferTarget)}</title>
+          </line>
+        )}
+        <path d={path} fill="none" stroke={BALANCE_COLOR} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+        {dots.map((dot, index) => <circle key={index} cx={dot.x} cy={dot.y} r="2.5" fill={dot.credit ? INCOME_COLOR : EXPENSE_COLOR}><title>{dot.label}</title></circle>)}
+        <circle cx={low.x} cy={low.y} r="5" fill="#FFFFFF" stroke={EXPENSE_COLOR} strokeWidth="2" />
+      </svg>
+      <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-[#667085]" data-testid="forecast-legend">
+        <li className="flex items-center gap-1.5" data-testid="legend-balance"><span className="h-0.5 w-3.5 rounded-full" style={{ backgroundColor: BALANCE_COLOR }} />Projected balance</li>
+        <li className="flex items-center gap-1.5" data-testid="legend-income"><span className="size-2 rounded-full" style={{ backgroundColor: INCOME_COLOR }} />Large income</li>
+        <li className="flex items-center gap-1.5" data-testid="legend-expense"><span className="size-2 rounded-full" style={{ backgroundColor: EXPENSE_COLOR }} />Large expense</li>
+        <li className="flex items-center gap-1.5" data-testid="legend-buffer">
+          <span className="w-3.5 border-t-2 border-dashed" style={{ borderColor: BUFFER_COLOR }} />
+          Protected buffer AED {money(forecast.bufferTarget)}{bufferY === null && ' (outside chart range)'}
+        </li>
+      </ul>
+    </>
   );
 }
 
@@ -61,7 +86,8 @@ export function YearAheadRibbon({ compact = false }: { compact?: boolean }) {
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-[.13em] text-[#98A2B3]">Safe to spend, {exemplarDateLabel}</p>
           <p className="mt-1 text-[30px] font-bold leading-none tracking-[-.04em] text-[#003B73] tabular-nums" data-testid="text-safe-to-spend-today">AED {money(forecast.safeToSpendToday)}</p>
-          {!compact && <p className="mt-2 max-w-[34ch] text-[11px] leading-4 text-[#667085]">{forecast.safeToSpendNote}</p>}
+          {/* Mirrors the engine's formula exactly (finance-engine.ts safeToSpendUntilPayday). */}
+          {!compact && <p className="mt-2 max-w-[34ch] text-[11px] leading-4 text-[#667085]" data-testid="text-safe-to-spend-explainer">Safe to spend is today’s balance minus the bills due before payday, planned goal savings, and your protected buffer.</p>}
         </div>
         <span className="grid size-11 shrink-0 place-items-center rounded-full bg-[#FCEAF1] text-[#D20A58]"><TrendingDown className="size-5" /></span>
       </div>
