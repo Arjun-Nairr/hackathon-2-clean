@@ -7,18 +7,19 @@ function sourceOf(relativePath: string): string {
   return readFileSync(fileURLToPath(new URL(`../${relativePath}`, import.meta.url)), "utf8");
 }
 
-const SAMPLE_LABEL = "Sample result — not calculated from your inputs yet";
+const CALCULATED_LABEL = "Calculated from your inputs and demo financial profile";
 
-test("the Loan results panel carries the sample-result label and no longer claims to calculate from the current inputs", () => {
+test("the Loan results panel honestly labels its live calculation", () => {
   const source = sourceOf("src/pages/loan.tsx");
-  assert.ok(source.includes(SAMPLE_LABEL));
-  assert.ok(!/runs the instalment through every month/i.test(source), "must not claim per-input calculation");
-  assert.ok(!/We check UAE legal limits/i.test(source), "must not claim a live legal-limits check");
+  assert.ok(source.includes(CALCULATED_LABEL));
+  assert.ok(!/Sample result — not calculated/i.test(source));
+  assert.ok(!/legal debt ratio/i.test(source), "must not describe demo thresholds as legal eligibility");
 });
 
-test("the Rent-vs-buy results panel carries the sample-result label", () => {
+test("the Rent-vs-buy results panel honestly labels its live calculation", () => {
   const source = sourceOf("src/pages/rent-vs-buy.tsx");
-  assert.ok(source.includes(SAMPLE_LABEL));
+  assert.ok(source.includes(CALCULATED_LABEL));
+  assert.ok(!/Sample result — not calculated/i.test(source));
 });
 
 test("the plan hub and chat no longer present Loan/Rent-vs-buy as live chat capabilities", () => {

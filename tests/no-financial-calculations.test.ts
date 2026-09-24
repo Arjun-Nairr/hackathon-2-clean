@@ -49,12 +49,13 @@ test("the composition root is the only place that imports mock-client and http-c
   const source = sourceOf("src/lib/api/index.ts");
   assert.match(source, /import\s*{\s*mockClient\s*}\s*from\s*['"]\.\/mock-client['"]/);
   assert.match(source, /import\s*{\s*httpClient\s*}\s*from\s*['"]\.\/http-client['"]/);
-  // Bundle 2: getMoneyCalendar/getCalendarForecast/sendChatMessage are real
-  // HTTP calls; everything else (Loan, Rent-vs-buy, Imports, Goals,
-  // Onboarding) stays on the mock, per this bundle's explicit scope.
+  // Calendar, Chat, Loan and Rent-vs-buy are real HTTP calls; the remaining
+  // methods stay on the mock until their endpoints exist.
   assert.match(source, /\.\.\.mockClient/);
   assert.match(source, /getMoneyCalendar:\s*httpClient\.getMoneyCalendar/);
   assert.match(source, /getCalendarForecast:\s*httpClient\.getCalendarForecast/);
+  assert.match(source, /checkAffordability:\s*httpClient\.checkAffordability/);
+  assert.match(source, /compareRentVsBuy:\s*httpClient\.compareRentVsBuy/);
   assert.match(source, /sendChatMessage:\s*httpClient\.sendChatMessage/);
 });
 

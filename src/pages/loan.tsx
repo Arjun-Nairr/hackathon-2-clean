@@ -28,7 +28,7 @@ function ResultPanel({ result }: { result: AffordabilityResult }) {
   return (
     <section className="mt-5 overflow-hidden rounded-[18px] border border-[#E4E7EC] bg-white p-4 shadow-sm" data-testid="section-loan-result">
       <p className="mb-3 inline-flex items-center gap-1.5 rounded-full border border-[#DDE7EC] bg-[#F8FAFC] px-3 py-1.5 text-[10px] font-semibold text-[#667085]" data-testid="text-loan-sample-label">
-        Sample result — not calculated from your inputs yet
+        Calculated from your inputs and demo financial profile
       </p>
       <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[.12em] ${tone}`}>
         <span className={`size-1.5 rounded-full ${dotTone}`} />
@@ -44,14 +44,14 @@ function ResultPanel({ result }: { result: AffordabilityResult }) {
 
       <div className="mt-2 grid grid-cols-3 gap-2">
         <Metric label="Real rate" value={`${result.reducingEquivalentRate.toFixed(2)}%`} hint="Reducing-balance equivalent" />
-        <Metric label="APR" value={`${result.apr.toFixed(2)}%`} hint="With the processing fee" />
+        <Metric label="Input rate" value={`${result.apr.toFixed(2)}%`} hint="Not an APR or bank offer" />
         <Metric label="Total interest" value={moneyShort(result.totalInterest)} hint={`Cost above principal ${moneyShort(result.totalCostAbovePrincipal)}`} />
       </div>
 
       <div className="mt-2 grid grid-cols-3 gap-2">
-        <Metric label="Legal debt ratio" value={`${result.legal.debtRatio.toFixed(1)}%`} hint={`Limit ${result.legal.maxDebtRatio.toFixed(1)}%`} good={result.legal.passes} />
-        <Metric label="Salary multiple" value={`${result.legal.salaryMultiple.toFixed(1)}×`} hint={`Limit ${result.legal.maxSalaryMultiple.toFixed(1)}×`} good={result.legal.salaryMultiple <= result.legal.maxSalaryMultiple} />
-        <Metric label="Resilience" value={`${result.resilience.monthsSurvived} mo`} hint="Months with no income" good={result.resilience.passes} />
+        <Metric label="Demo debt ratio" value={`${result.legal.debtRatio.toFixed(1)}%`} hint={`Demo max ${result.legal.maxDebtRatio.toFixed(1)}%`} good={result.legal.passes} />
+        <Metric label="Salary multiple" value={`${result.legal.salaryMultiple.toFixed(1)}×`} hint={`Demo max ${result.legal.maxSalaryMultiple.toFixed(1)}×`} good={result.legal.salaryMultiple <= result.legal.maxSalaryMultiple} />
+        <Metric label="Buffer check" value={result.resilience.passes ? 'Pass' : 'Review'} hint="Planning threshold only" good={result.resilience.passes} />
       </div>
 
       {result.suggestions.length > 0 && (
@@ -105,7 +105,7 @@ export default function LoanPage() {
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[.16em] text-[#667085]">Decision 02 / Borrowing</p>
             <h1 className="mt-1 text-[28px] font-bold leading-none tracking-[-.04em] text-[#003B73]">Can I safely borrow?</h1>
-            <p className="mt-3 text-[12px] leading-5 text-[#667085]">See a sample of what an affordability check weighs: legal limits, month-by-month cash flow, and buffer resilience.</p>
+            <p className="mt-3 text-[12px] leading-5 text-[#667085]">See what this demo affordability check weighs: transparent thresholds, month-by-month cash flow, and buffer resilience.</p>
           </div>
         </header>
 
@@ -173,7 +173,7 @@ export default function LoanPage() {
 
           {calendar && (
             <div className="mt-5 border-t border-[#EEF1F3] pt-4 text-[10px] leading-4 text-[#667085]">
-              <span className="font-semibold text-[#003B73]">Using {calendar.monthLabel} as the demo exemplar.</span> This shows a sample result — it is not yet calculated from the numbers above.
+              <span className="font-semibold text-[#003B73]">Using {calendar.monthLabel} as the demo financial profile.</span> Results use the numbers above plus backend calendar context.
             </div>
           )}
         </section>

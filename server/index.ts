@@ -10,6 +10,8 @@ import { loadSkill } from '../api/_lib/skill';
 import calendarHandler from '../api/calendar';
 import calendarForecastHandler from '../api/calendar-forecast';
 import financialSnapshotHandler from '../api/financial-snapshot';
+import loanHandler from '../api/loan';
+import rentVsBuyHandler from '../api/rent-vs-buy';
 import chatHandler from '../api/chat';
 import confirmDraftHandler from '../api/drafts/[draftId]/confirm';
 import rejectDraftHandler from '../api/drafts/[draftId]/reject';
@@ -40,6 +42,14 @@ app.get('/api/calendar-forecast', (req, res) => {
 app.get('/api/financial-snapshot', (req, res) => {
   const { req: apiReq, res: apiRes } = asApi(req, res);
   void financialSnapshotHandler(apiReq, apiRes);
+});
+app.post('/api/loan', (req, res) => {
+  const { req: apiReq, res: apiRes } = asApi(req, res);
+  void loanHandler(apiReq, apiRes);
+});
+app.post('/api/rent-vs-buy', (req, res) => {
+  const { req: apiReq, res: apiRes } = asApi(req, res);
+  void rentVsBuyHandler(apiReq, apiRes);
 });
 app.post('/api/chat', (req, res) => {
   const { req: apiReq, res: apiRes } = asApi(req, res);
