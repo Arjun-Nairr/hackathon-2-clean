@@ -1,9 +1,7 @@
-// Real HTTP implementation, calling same-origin /api/* routes. Bundle 2
-// only migrates Home/Calendar/forecast-ribbon/Chat (per scope), so this
-// covers exactly those three ApiClient methods; the composition root
-// (./index.ts) still delegates everything else to the mock.
+// Real HTTP implementation for the methods backed by same-origin /api/*
+// routes. The composition root delegates remaining methods to the mock.
 import type { ApiClient } from './client';
-import type { CalendarForecast, ChatRequest, ChatResponse, ConfirmDraftResult, MoneyCalendar, RejectDraftResult } from './types';
+import type { AffordabilityInput, AffordabilityResult, CalendarForecast, ChatRequest, ChatResponse, ConfirmDraftResult, MoneyCalendar, RejectDraftResult, RentVsBuyInput, RentVsBuyResult } from './types';
 
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path);
@@ -25,13 +23,21 @@ async function postJson<T>(path: string, body?: unknown): Promise<T> {
   return (await response.json()) as T;
 }
 
-export const httpClient: Pick<ApiClient, 'getMoneyCalendar' | 'getCalendarForecast' | 'sendChatMessage' | 'confirmCalendarDraft' | 'rejectCalendarDraft'> = {
+export const httpClient: Pick<ApiClient, 'getMoneyCalendar' | 'getCalendarForecast' | 'checkAffordability' | 'compareRentVsBuy' | 'sendChatMessage' | 'confirmCalendarDraft' | 'rejectCalendarDraft'> = {
   getMoneyCalendar(): Promise<MoneyCalendar> {
     return getJson<MoneyCalendar>('/api/calendar');
   },
 
   getCalendarForecast(): Promise<CalendarForecast> {
     return getJson<CalendarForecast>('/api/calendar-forecast');
+  },
+
+  checkAffordability(input: AffordabilityInput): Promise<AffordabilityResult> {
+    return postJson<AffordabilityResult>('/api/loan', input);
+  },
+
+  compareRentVsBuy(input: RentVsBuyInput): Promise<RentVsBuyResult> {
+    return postJson<RentVsBuyResult>('/api/rent-vs-buy', input);
   },
 
   sendChatMessage(request: ChatRequest): Promise<ChatResponse> {
