@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { EVENTS, PROFILE } from '../db/seed-data.ts';
-import { demoBankStatement as statement } from '../src/lib/demo-bank-statement.ts';
+import { EVENTS, PROFILE } from '../db/seed-data';
+import { demoBankStatement as statement } from '../src/lib/demo-bank-statement';
 
 test('demo statement reconciles to the seeded closing balance', () => {
-  const closing = statement.transactions.reduce(
+  const closing = statement.transactions.reduce<number>(
     (balance, transaction) => balance + (transaction.credit ?? 0) - (transaction.debit ?? 0),
     statement.openingBalance,
   );
