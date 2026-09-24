@@ -6,8 +6,8 @@
 import { randomUUID } from 'node:crypto';
 import { buildCalendarForecast, buildMoneyCalendar, type EventRow, type ProfileRow } from './finance-engine.js';
 import { validateCalendarChangeDraft, type CalendarChangeDraft } from './draft-schema.js';
-import { insertPendingDraft } from './drafts-repository.js';
-import { mapDraftEventToEventRow } from './draft-mapping.js';
+import { insertPendingDraft, markDraftRejected } from './drafts-repository.js';
+import { dateToDayAndMonthOffset, mapDraftEventToEventRow } from './draft-mapping.js';
 import type { GeminiToolDeclaration } from './gemini.js';
 
 const eventParameters = {
@@ -41,7 +41,7 @@ export const READ_TOOLS: GeminiToolDeclaration[] = [
   },
   {
     name: 'list_upcoming_commitments',
-    description: 'Every recorded income and expense event for the exemplar month, with its event id and whether it is still upcoming. Call this before proposing a removal to find the exact id.',
+    description: 'Every recorded income and expense event (the demo month and any later month), with its event id, date, and whether it is still upcoming. Call this before proposing a removal to find the exact id.',
     parameters: { type: 'object', properties: {} },
   },
 ];
@@ -84,7 +84,12 @@ export interface DraftImpact {
 
 export interface ToolExecution {
   result: Record<string, unknown>;
-  draftCreated?: { draftId: string; draft: CalendarChangeDraft; impact: DraftImpact };
+  // Every monetary value this tool handed to Gemini — database- or
+  // engine-backed, so chat.ts's number guard may accept Gemini repeating
+  // any of them this turn. Day numbers and counts are deliberately never
+  // included (a day reused as "AED 20" must still be rejected).
+  amounts: number[];
+  draftCreated?: { draftId: string; draft: CalendarChangeDraft; impact: DraftImpact; target?: { label: string; amount: number } };
 }
 
 // Which month key (e.g. "2026-10") a month_offset from profile.month falls
@@ -94,6 +99,10 @@ function monthKeyForOffset(profileMonth: string, offset: number): string {
   const [y, m] = profileMonth.split('-').map(Number);
   const date = new Date(Date.UTC(y, m - 1 + offset, 1));
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+function eventIsoDate(profileMonth: string, event: EventRow): string {
+  return `${monthKeyForOffset(profileMonth, event.monthOffset)}-${String(event.day).padStart(2, '0')}`;
 }
 
 // The financial impact of a validated add/delete draft, computed purely by
@@ -140,16 +149,19 @@ export async function executeTool(name: string, args: unknown, ctx: ToolContext)
   const forecast = buildCalendarForecast(ctx.profile, ctx.events);
 
   switch (name) {
-    case 'get_financial_snapshot':
+    case 'get_financial_snapshot': {
+      const s = calendar.financialSnapshot;
       return {
         result: {
-          ...calendar.financialSnapshot,
+          ...s,
           dailyAllowance: calendar.dailyAllowance,
           daysLeft: calendar.daysLeft,
           nextPaydayDate: calendar.nextPaydayDate,
           tightDay: calendar.tightDay,
         },
+        amounts: [s.currentAvailableBalance, s.expectedIncomeBeforeNextPayday, s.billsAndCommitmentsDueBeforeNextPayday, s.minimumDebtPayments, s.plannedGoalContributions, s.recommendedEmergencyBuffer, s.safeToSpendUntilPayday, calendar.dailyAllowance],
       };
+    }
 
     case 'get_calendar_forecast':
       return {
@@ -159,14 +171,28 @@ export async function executeTool(name: string, args: unknown, ctx: ToolContext)
           horizonMonths: forecast.horizonMonths,
           nextSalaryDate: forecast.nextSalaryDate,
         },
+        amounts: [forecast.lowestPoint.balance, ...Object.values(forecast.monthEnd)],
       };
 
     case 'list_upcoming_commitments': {
-      const upcomingIds = new Set(calendar.upcomingCommitments.map((e) => e.id));
+      // Every recorded event, in every month — not buildMoneyCalendar's
+      // `events`, which holds only the exemplar month and so hid any event
+      // a confirmed draft had placed in a later month (it could never be
+      // removed). `upcoming` means dated after the fixed demo "today".
+      const sorted = [...ctx.events].sort((a, b) => a.monthOffset - b.monthOffset || a.day - b.day);
       return {
         result: {
-          events: calendar.events.map((e) => ({ id: e.id, label: e.label, amount: e.amount, day: e.day, kind: e.kind, upcoming: upcomingIds.has(e.id) })),
+          events: sorted.map((e) => ({
+            id: e.id,
+            label: e.label,
+            amount: e.amount,
+            date: eventIsoDate(ctx.profile.month, e),
+            kind: e.kind,
+            recurring: e.recurring,
+            upcoming: e.monthOffset > 0 || e.day > ctx.profile.asOfDay,
+          })),
         },
+        amounts: ctx.events.map((e) => e.amount),
       };
     }
 
@@ -179,7 +205,7 @@ export async function executeTool(name: string, args: unknown, ctx: ToolContext)
       // silently falling through to the validator, which would still
       // accept "update" for schema/database compatibility.
       if (rawArgs.action !== 'add' && rawArgs.action !== 'delete') {
-        return { result: { ok: false, error: 'action must be "add" or "delete" — there is no update/reschedule action. Delete the event and add its replacement instead.' } };
+        return { result: { ok: false, error: 'action must be "add" or "delete" — there is no update/reschedule action. Delete the event and add its replacement instead.' }, amounts: [] };
       }
 
       // Never invent an event id: a "delete" must name a real, currently
@@ -188,7 +214,7 @@ export async function executeTool(name: string, args: unknown, ctx: ToolContext)
       if (rawArgs.action === 'delete') {
         const targetId = typeof rawArgs.target_event_id === 'string' ? rawArgs.target_event_id : undefined;
         if (!targetId || !ctx.events.some((e) => e.id === targetId)) {
-          return { result: { ok: false, error: `No recorded event with id "${targetId ?? ''}". Call list_upcoming_commitments to find the correct id, or tell the user no matching event was found.` } };
+          return { result: { ok: false, error: `No recorded event with id "${targetId ?? ''}". Call list_upcoming_commitments to find the correct id, or tell the user no matching event was found.` }, amounts: [] };
         }
       }
 
@@ -197,7 +223,21 @@ export async function executeTool(name: string, args: unknown, ctx: ToolContext)
       // entry. The JSON schema/validator still allow up to 12 (compat),
       // but the model-exposed tool is narrower.
       if (rawArgs.action === 'add' && (!Array.isArray(rawArgs.events) || rawArgs.events.length !== 1)) {
-        return { result: { ok: false, error: 'action "add" must propose exactly one event. Propose one expense or income source per draft.' } };
+        return { result: { ok: false, error: 'action "add" must propose exactly one event. Propose one expense or income source per draft.' }, amounts: [] };
+      }
+
+      // The finance engine only reads the demo month and the forecast
+      // horizon after it: a date before the demo month, or past the
+      // horizon, would be confirmed and written yet affect nothing the
+      // user can see. Refuse it here so Gemini asks for a usable date.
+      if (rawArgs.action === 'add') {
+        const date = (rawArgs.events as Array<Record<string, unknown>>)[0]?.date;
+        if (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+          const { monthOffset } = dateToDayAndMonthOffset(date, ctx.profile.month);
+          if (monthOffset < 0 || monthOffset >= forecast.horizonMonths) {
+            return { result: { ok: false, error: `Date ${date} is outside the calendar this app tracks (${ctx.profile.month} through the next ${forecast.horizonMonths - 1} months). Ask the user for a date in that range.` }, amounts: [] };
+          }
+        }
       }
 
       // draft_id, requires_confirmation, and source_message_id are always
@@ -211,17 +251,30 @@ export async function executeTool(name: string, args: unknown, ctx: ToolContext)
       };
       const validated = validateCalendarChangeDraft(candidate);
       if (!validated.valid) {
-        return { result: { ok: false, errors: validated.errors } };
+        return { result: { ok: false, errors: validated.errors }, amounts: [] };
       }
-      await insertPendingDraft(ctx.profile.id, validated.draft);
-      const impact = computeDraftImpact(ctx.profile, ctx.events, validated.draft);
+      const draft = validated.draft;
+      // Everything that can throw runs before the insert, so a failure
+      // never strands a pending row that no card was ever shown for.
+      const impact = computeDraftImpact(ctx.profile, ctx.events, draft);
+      const targetEvent = draft.action === 'delete' ? ctx.events.find((e) => e.id === draft.target_event_id) : undefined;
+      const target = targetEvent ? { label: targetEvent.label, amount: targetEvent.amount } : undefined;
+      try {
+        await insertPendingDraft(ctx.profile.id, draft);
+      } catch (err) {
+        // The write may have landed even though the call failed (e.g. a
+        // timeout after commit) — make sure it can't sit there actionable.
+        await markDraftRejected(draft.draft_id).catch(() => {});
+        throw err;
+      }
       return {
-        result: { ok: true, draft_id: validated.draft.draft_id, status: 'pending', impact },
-        draftCreated: { draftId: validated.draft.draft_id, draft: validated.draft, impact },
+        result: { ok: true, draft_id: draft.draft_id, status: 'pending', impact },
+        amounts: [...(draft.events ?? []).map((e) => e.amount_aed), impact.before, impact.after, ...(target ? [target.amount] : [])],
+        draftCreated: { draftId: draft.draft_id, draft, impact, target },
       };
     }
 
     default:
-      return { result: { ok: false, error: `Unsupported tool: ${name}` } };
+      return { result: { ok: false, error: `Unsupported tool: ${name}` }, amounts: [] };
   }
 }

@@ -164,6 +164,7 @@ export type CalendarDraftCard = {
   draftId: string;
   action: 'add' | 'update' | 'delete';
   targetEventId?: string;
+  targetEventLabel?: string;
   events: CalendarDraftEventView[];
   reason: string;
   impact: CalendarDraftImpact;

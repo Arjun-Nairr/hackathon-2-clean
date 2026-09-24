@@ -41,9 +41,10 @@ test("list_upcoming_commitments returns every recorded event (not just still-upc
   // has to be resolvable too.
   assert.deepEqual(rows.map((r) => r.id).sort(), calendar.events.map((e) => e.id).sort());
 
-  const upcomingIds = new Set(calendar.upcomingCommitments.map((e) => e.id));
+  // `upcoming` = dated after the demo "today" (day 10), income included.
   for (const row of rows) {
-    assert.equal(row.upcoming, upcomingIds.has(row.id), `expected upcoming flag to match for ${row.id}`);
+    const day = events.find((e) => e.id === row.id)!.day;
+    assert.equal(row.upcoming, day > PROFILE.asOfDay, `expected upcoming flag to match for ${row.id}`);
   }
 });
 

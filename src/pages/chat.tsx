@@ -118,8 +118,11 @@ function CalendarDraftCardView({ card, status, onStatusChange }: { card: Extract
   const queryClient = useQueryClient();
   const busy = confirm.isPending || reject.isPending;
 
+  const [failed, setFailed] = useState(false);
+
   const handleConfirm = () => {
     if (busy || status !== 'pending') return;
+    setFailed(false);
     confirm.mutate(
       { draftId: card.draftId },
       {
@@ -128,13 +131,15 @@ function CalendarDraftCardView({ card, status, onStatusChange }: { card: Extract
           queryClient.invalidateQueries({ queryKey: getGetCalendarForecastQueryKey() });
           onStatusChange('confirmed');
         },
+        onError: () => setFailed(true),
       },
     );
   };
 
   const handleReject = () => {
     if (busy || status !== 'pending') return;
-    reject.mutate({ draftId: card.draftId }, { onSuccess: () => onStatusChange('rejected') });
+    setFailed(false);
+    reject.mutate({ draftId: card.draftId }, { onSuccess: () => onStatusChange('rejected'), onError: () => setFailed(true) });
   };
 
   const actionLabel = card.action === 'add' ? 'Proposed addition' : card.action === 'update' ? 'Proposed update' : 'Proposed removal';
@@ -158,7 +163,7 @@ function CalendarDraftCardView({ card, status, onStatusChange }: { card: Extract
           );
         })
       ) : (
-        <p className="mt-2 text-[15px] font-bold leading-tight text-[#003B73]">Remove event: {card.targetEventId}</p>
+        <p className="mt-2 text-[15px] font-bold leading-tight text-[#003B73]">Remove: {card.targetEventLabel ?? card.targetEventId}</p>
       )}
       <div className="mt-2 rounded-[12px] bg-[#F8FAFC] px-3 py-2" data-testid="text-draft-impact">
         <p className="text-[10px] font-semibold uppercase tracking-[.1em] text-[#98A2B3]">{card.impact.metricLabel}</p>
@@ -179,6 +184,7 @@ function CalendarDraftCardView({ card, status, onStatusChange }: { card: Extract
           </button>
         </div>
       )}
+      {failed && status === 'pending' && <p className="mt-2 text-[11.5px] font-semibold text-[#D20A58]" data-testid="text-draft-error">That didn’t go through — your calendar is unchanged. Try again.</p>}
       {status === 'confirmed' && <p className="mt-3 text-[12px] font-semibold text-[#12A66A]" data-testid="text-draft-confirmed">Confirmed — your calendar is updated.</p>}
       {status === 'rejected' && <p className="mt-3 text-[12px] font-semibold text-[#667085]" data-testid="text-draft-rejected">Not applied.</p>}
     </article>
@@ -203,7 +209,7 @@ function AssistantMessage({ message, onDraftStatusChange }: { message: Extract<M
       {card.type === 'decline' && (
         <p className="rounded-[14px] bg-[#F2F4F7] px-3.5 py-2.5 text-[12px] leading-5 text-[#667085]" data-testid="card-decline">I can only answer questions about your calendar, balance, safe-to-spend, or upcoming commitments right now.</p>
       )}
-      {card.type === 'unavailable' && (
+      {card.type === 'unavailable' && card.capability !== 'chat' && card.capability !== 'unverified-figure' && (
         <p className="rounded-[14px] bg-[#F2F4F7] px-3.5 py-2.5 text-[12px] leading-5 text-[#667085]" data-testid="card-unavailable">That capability isn’t connected yet.</p>
       )}
     </div>

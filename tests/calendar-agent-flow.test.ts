@@ -279,10 +279,10 @@ test("an unrelated message after an open calendar_change thread is answered norm
   );
 });
 
-test("a draft persisted before a later failure in the same turn is rejected, not left as a hidden pending draft", async () => {
+test("a draft persisted before a later failure in the same turn is never hidden — the only pending row is the card the user sees", async () => {
   const sourceMessageId = `test-hidden-draft-${randomUUID()}`;
   try {
-    await withFakeGeminiSequence(
+    const result = await withFakeGeminiSequence(
       [
         {
           functionCall: {
@@ -299,13 +299,16 @@ test("a draft persisted before a later failure in the same turn is rejected, not
         // already inserted as 'pending'.
         { text: "Actually, on top of that your balance is now AED 999,999 short." },
       ],
-      async () => {
-        await assert.rejects(() => answerChatMessage("Add a one-time AED 500 bonus on 28 September 2026.", [], PROFILE, events, sourceMessageId));
-      },
+      () => answerChatMessage("Add a one-time AED 500 bonus on 28 September 2026.", [], PROFILE, events, sourceMessageId),
     );
-    const rows = await sql()`select status from calendar_drafts where source_message_id = ${sourceMessageId}`;
-    assert.equal(rows.length, 1, "the draft insert itself must still have happened");
-    assert.equal(rows[0]?.status, "rejected", "a draft orphaned by a same-turn failure must be rejected, never left pending");
+    // The unverifiable text is dropped; the validated draft is shown with
+    // server-written text instead of being stranded behind an error.
+    assert.equal(result.card.type, "calendar_draft");
+    assert.doesNotMatch(result.text, /999/);
+    const rows = await sql()`select draft_id, status from calendar_drafts where source_message_id = ${sourceMessageId}`;
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.status, "pending");
+    if (result.card.type === "calendar_draft") assert.equal(rows[0]?.draft_id, result.card.draftId, "the pending row is exactly the draft on screen");
   } finally {
     await sql()`delete from calendar_drafts where source_message_id = ${sourceMessageId}`;
   }

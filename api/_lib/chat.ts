@@ -11,7 +11,6 @@ import { callGemini, GeminiError, type GeminiContent } from './gemini.js';
 import { classifyIntentWithHistory, isUnderspecifiedAddRequest } from './intent.js';
 import { loadSkill } from './skill.js';
 import { ALL_TOOLS, READ_TOOLS, executeTool, type ToolExecution } from './tools.js';
-import { markDraftRejected } from './drafts-repository.js';
 import { extractNumbers, findUnsupportedMonetaryClaims } from './number-guard.js';
 import type { ChatCard, ChatHistoryItem } from '../../src/lib/api/types';
 
@@ -126,6 +125,8 @@ export async function answerChatMessage(
     `Today is day ${profile.asOfDay} of the fixed demo exemplar month ${profile.month} — never claim this is the real current date.`,
     'Keep the answer under 80 words, plain and direct.',
     'When proposing a calendar change, a short generic name derived from its category (e.g. "Monthly expense", "Rent payment") is enough — the amount, direction, date, and recurrence are the fields worth asking about if missing; do not ask the user to invent a name for it.',
+    'When asking which event to remove, list the candidates by name and date only — amounts are not needed to choose.',
+    `Convert relative dates ("today", "tomorrow", "Friday", "this weekend", "end of month") using the demo date ${profile.month}-${String(profile.asOfDay).padStart(2, '0')}, never the real calendar date.`,
   ].join('\n');
 
   const boundedHistory = history
@@ -138,6 +139,11 @@ export async function answerChatMessage(
 
   let finalText: string | undefined;
   let draftCreated: ToolExecution['draftCreated'];
+  // Monetary values the tools actually handed Gemini this turn (event
+  // amounts from the event list, a draft's amount and impact) — trusted
+  // because they came from the database/engine, and scoped to this turn so
+  // an amount Gemini never saw can't be claimed.
+  const toolAmounts: number[] = [];
 
   try {
     for (let turn = 0; turn < MAX_TOOL_CALLS; turn += 1) {
@@ -163,63 +169,72 @@ export async function answerChatMessage(
       }
 
       const execution = await executeTool(callPart.name, callPart.args, { profile, events, sourceMessageId });
+      toolAmounts.push(...execution.amounts);
       if (execution.draftCreated) draftCreated = execution.draftCreated;
       // See gemini.ts's GeminiContent comment: this model wants the tool
       // result back as role "user", not the conventional "function" role.
       contents.push({ role: 'user', parts: [{ functionResponse: { name: callPart.name, response: execution.result } }] });
     }
-
-    if (!finalText) {
-      throw new GeminiError('Gemini did not produce a final answer within the tool-call limit.');
-    }
-
-    // Defense in depth: the system prompt and skill both say never to
-    // invent a number, but a prompt is not a guarantee. The allow-list
-    // always includes numbers the user themselves supplied in this message
-    // (a figure the user typed is a fact, not something Gemini invented —
-    // e.g. "Can I afford a AED 3,000 TV?" lets Gemini repeat "AED 3,000"
-    // back without tripping the guard). A calendar_change turn additionally
-    // allows the amounts in any draft that got created.
-    const allowList =
-      intent === 'calendar_change'
-        ? [...monetaryAmounts, ...extractNumbers(trimmed), ...(draftCreated?.draft.events?.map((e) => e.amount_aed) ?? [])]
-        : [...monetaryAmounts, ...extractNumbers(trimmed)];
-
-    const unsupported = findUnsupportedMonetaryClaims(finalText, allowList);
-    if (unsupported.length > 0) {
-      throw new UnsupportedClaimError(`Gemini response contained unsupported monetary claim(s): ${unsupported.join(', ')}`);
-    }
   } catch (err) {
-    // A draft was already persisted as 'pending' by executeTool, but this
-    // turn is about to fail (no final answer, a Gemini error even after
-    // the one retry, or an unverifiable claim) — the caller below never
-    // runs, so no card is ever shown for it. Left alone, that draft would
-    // be an invisible row still sitting there as actionable. Reject it —
-    // this only flips calendar_drafts.status, never calendar_events — so
-    // nothing pending survives a turn the user never saw succeed.
-    // Best-effort: if this cleanup itself fails, the original error is
-    // still what the user sees.
-    if (draftCreated) {
-      await markDraftRejected(draftCreated.draftId).catch(() => {});
-    }
+    // A validated draft already exists and its card needs nothing further
+    // from Gemini — show it with server-written text rather than failing
+    // the whole turn (which would leave the user a pending draft they
+    // never saw). Without a draft, the error propagates as before.
+    if (draftCreated) return draftResponse(draftCreated, undefined);
     throw err;
   }
 
-  if (draftCreated) {
-    const d = draftCreated.draft;
-    return {
-      text: finalText!,
-      card: {
-        type: 'calendar_draft',
-        draftId: d.draft_id,
-        action: d.action,
-        targetEventId: d.target_event_id,
-        events: (d.events ?? []).map((e) => ({ name: e.name, amountAed: e.amount_aed, direction: e.direction, date: e.date, recurrence: e.recurrence, category: e.category, note: e.note })),
-        reason: d.reason,
-        impact: draftCreated.impact,
-      },
-    };
+  if (!finalText) {
+    if (draftCreated) return draftResponse(draftCreated, undefined);
+    throw new GeminiError('Gemini did not produce a final answer within the tool-call limit.');
   }
 
-  return { text: finalText!, card: { type: 'answer', source: 'gemini' } };
+  // Defense in depth: the system prompt and skill both say never to invent
+  // a number, but a prompt is not a guarantee. Allowed: engine figures,
+  // figures a tool returned this turn (e.g. an event's amount from the
+  // event list, a draft's impact), and figures the user typed — in this
+  // message or an earlier user turn (e.g. an amount given two turns ago in
+  // the same clarification). Assistant turns are never a source.
+  const userNumbers = [trimmed, ...history.slice(-MAX_HISTORY).filter((h) => h.role === 'user').map((h) => h.content)].flatMap(extractNumbers);
+  const unsupported = findUnsupportedMonetaryClaims(finalText, [...monetaryAmounts, ...toolAmounts, ...userNumbers]);
+  if (unsupported.length > 0) {
+    // With a valid draft, drop Gemini's text (the unverified figure is
+    // never shown) and describe the draft from its own validated fields.
+    if (draftCreated) return draftResponse(draftCreated, undefined);
+    throw new UnsupportedClaimError(`Gemini response contained unsupported monetary claim(s): ${unsupported.join(', ')}`);
+  }
+
+  if (draftCreated) return draftResponse(draftCreated, finalText);
+  return { text: finalText, card: { type: 'answer', source: 'gemini' } };
+}
+
+const CONFIRM_SENTENCE = 'Nothing changes until you confirm in the app.';
+const money = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+
+// Every draft reply ends with CONFIRM_SENTENCE, whoever wrote the rest: it
+// is how intent.ts recognises from plain-text history that this request is
+// complete and must not be reopened by a later short reply.
+function draftResponse(created: NonNullable<ToolExecution['draftCreated']>, geminiText: string | undefined): ChatResult {
+  const d = created.draft;
+  const e = d.events?.[0];
+  const serverText =
+    d.action === 'delete'
+      ? `I've prepared a draft to remove ${created.target?.label ?? 'this event'}${created.target ? ` (AED ${money(created.target.amount)})` : ''}.`
+      : e
+        ? `I've prepared a draft to add ${e.name}: ${e.direction === 'credit' ? 'income' : 'an expense'} of AED ${money(e.amount_aed)}, ${e.recurrence === 'none' ? 'one-time on' : `${e.recurrence} from`} ${e.date}.`
+        : "I've prepared a draft.";
+  const body = geminiText?.trim() || serverText;
+  return {
+    text: body.includes(CONFIRM_SENTENCE) ? body : `${body} ${CONFIRM_SENTENCE}`,
+    card: {
+      type: 'calendar_draft',
+      draftId: d.draft_id,
+      action: d.action,
+      targetEventId: d.target_event_id,
+      targetEventLabel: created.target?.label,
+      events: (d.events ?? []).map((ev) => ({ name: ev.name, amountAed: ev.amount_aed, direction: ev.direction, date: ev.date, recurrence: ev.recurrence, category: ev.category, note: ev.note })),
+      reason: d.reason,
+      impact: created.impact,
+    },
+  };
 }
